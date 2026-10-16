@@ -209,3 +209,9 @@ uv run python train.py --experiment a0_mbtc \
 损失分项用 `--support_weight`、`--trajectory_weight`、`--motion_direction_weight`、`--motion_speed_weight`、`--route_weight` 控制，置 0 可关闭对应项。动态卷积位置用 `--motion_gd none/shallow/encoder/all`，时间尺度用 `--motion_temporal_dilations 1 2 4 8`。只有实际使用该模块或损失的配置，这些参数才有作用。
 
 评估必须使用训练时相同的预设及覆盖参数；特别是 legacy 与 corrected 的权重形状相同，严格加载成功不能证明模式一致。以保存的 `config.json` 为准。布尔选项支持 `--vis` / `--no-vis`，兼容旧式 `--vis False`。
+
+## 9. Attention 反向 NaN 诊断
+
+若报错 `ScaledDotProductEfficientAttentionBackward0`，先在原训练命令上添加 `--attention_backend math --diagnose_numerics`，并使用新的 run_name。math 禁用融合 SDPA 后端，可能增加时间和显存开销；此开关用于隔离后端问题，不保证解决所有 NaN。默认 auto 保持历史行为。
+
+保持 epochs=50、seed、学习率、损失权重及事件数量不变，以保留原学习率计划。诊断模式遇到非有限值立即停止。正式对照与评估使用相同 attention_backend，并在 config.json 中记录。

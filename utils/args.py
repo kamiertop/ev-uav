@@ -80,6 +80,8 @@ def parse(extra: list[tuple[str, dict[str, Any]]] | None = None) -> argparse.Nam
     parser.add_argument("--block_reps", default=2, type=int)
     parser.add_argument("--use_coords", default=True, type=_boolean, nargs="?", const=True)
     parser.add_argument("--no-use_coords", dest="use_coords", action="store_false")
+    parser.add_argument("--attention_backend", default="auto", choices=["auto", "math"],
+                        help="SDPA backend; math disables fused kernels for numerical diagnosis")
     parser.add_argument("--patch_attention", default="sequence",
                         choices=["sequence", "legacy", "corrected"],
                         help="sequence: enhanced; corrected: sequence fix only; legacy: released behavior")

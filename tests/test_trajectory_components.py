@@ -53,6 +53,19 @@ class MotionTargetTest(unittest.TestCase):
 
 
 class PatchAttentionTest(unittest.TestCase):
+    def test_math_backend_matches_explicit_attention_forward_and_backward(self):
+        for mode in ("legacy", "corrected", "sequence"):
+            module = patch_attention(8, (11, 9, 8), mode=mode, attention_backend="math")
+            sequence = torch.randn(3, 1 if mode == "legacy" else 4, 8, requires_grad=True)
+            actual = module._attention(sequence)
+            expected, _ = module.multihead_attn(sequence, sequence, sequence, need_weights=True)
+            torch.testing.assert_close(actual, expected)
+            actual_grad = torch.autograd.grad(actual.square().sum(), sequence)[0]
+            expected_grad = torch.autograd.grad(expected.square().sum(), sequence)[0]
+            torch.testing.assert_close(actual_grad, expected_grad)
+            self.assertTrue(torch.isfinite(actual_grad).all())
+
+
     def test_corrected_preserves_legacy_parameters_and_isolates_samples(self):
         torch.manual_seed(4)
         legacy = patch_attention(8, (11, 9, 8), mode="legacy")

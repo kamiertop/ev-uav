@@ -104,3 +104,9 @@ Fa 换算：`1.27228e-05 / 1e-4 = 0.127228`。不要将原始输出 `1.27228e-05
 这将异常起点前移到 epoch 3，远早于 epoch 48 的 OOM 警告。有限的前向损失不保证反向梯度有限；目前需要区分 batch 9 的反向/更新损坏与 batch 10 的数据/前向异常。motion_gd=none 下 route_balance 来自 probabilities.sum()*0，预测含 NaN 时该占位零也会成为 NaN，并不表示启用了路由模块。
 
 新增可选 `--diagnose_numerics`：启用 autograd 异常追踪，检查输入、输出、更新后参数与缓冲区，并记录 failure_stage。该模式有额外耗时，仅用于定位。复现时保留 epochs=50 的学习率计划；改为 epochs=4 会改变线性衰减速度，不能准确复现本次异常。尚未确认根因。
+
+### 诊断运行定位到 Attention 反向算子
+
+运行 `train_a0_mbtc_s37_diagnose_20261016_151451` 在 epoch=4、batch=54 停止，autograd 报告 `ScaledDotProductEfficientAttentionBackward0` 的第 0 个输出含 NaN，前向调用来自 `pa3` 的 legacy Attention。这确定了此次被捕获的异常算子，尚不能独立证明是 PyTorch 内核缺陷，亦不能排除其上游梯度数值异常。
+
+新增 `--attention_backend auto/math`，默认 auto 保持原行为；math 使用 PyTorch 的 `sdpa_kernel(SDPBackend.MATH)` 排除融合 SDPA 后端，保持模型结构与损失不变。先按原 50 轮学习率计划、同 seed 加 math 和 diagnose_numerics 重跑，不同时修改其他超参数。后端变更须记录在实验配置中；若最终采用 math，正式对照应统一后端。CPU 前向/反向对照不能替代服务器验证。

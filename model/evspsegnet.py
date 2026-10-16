@@ -1,4 +1,6 @@
 import torch
+from contextlib import nullcontext
+from torch.nn.attention import sdpa_kernel, SDPBackend
 import torch.nn as nn
 import torch.nn.functional as torch_f
 import spconv.pytorch as spconv
@@ -21,10 +23,13 @@ class patch_attention(spconv.SparseModule,):
     groups patches by batch id and attends over each sample's patch sequence.
     """
 
-    def __init__(self, channel,in_sptial_size,att_sptial_size=(11,9,8),indice_key='pa1', mode='sequence'):
+    def __init__(self, channel,in_sptial_size,att_sptial_size=(11,9,8),indice_key='pa1', mode='sequence', attention_backend='auto'):
         super(patch_attention, self).__init__()
         if mode not in {"legacy", "corrected", "sequence"}:
             raise ValueError(f"Unknown attention mode: {mode}")
+        if attention_backend not in {"auto", "math"}:
+            raise ValueError(f"Unknown attention backend: {attention_backend}")
+        self.attention_backend = attention_backend
         self.mode = mode
         maxpool_num = math.log2(int(in_sptial_size[0]/att_sptial_size[0]))
         self.layers = nn.ModuleList()
@@ -48,6 +53,15 @@ class patch_attention(spconv.SparseModule,):
             padding=1 if mode != "sequence" else 0, bias=False,
         )
 
+    def _attention(self, sequence):
+        context = (sdpa_kernel(SDPBackend.MATH)
+                   if self.attention_backend == "math" else nullcontext())
+        with context:
+            attended, _ = self.multihead_attn(
+                sequence, sequence, sequence, need_weights=False,
+            )
+        return attended
+
     def _attend_features(self, features, indices, spatial_shape):
         """Dense part of patch attention, separated for CPU unit testing."""
         output = torch.empty_like(features)
@@ -65,9 +79,7 @@ class patch_attention(spconv.SparseModule,):
                 self.pre_norm(features[mask] + position[mask])
                 if self.pre_norm is not None else features[mask]
             ).unsqueeze(0)
-            attended, _ = self.multihead_attn(
-                sequence, sequence, sequence, need_weights=False,
-            )
+            attended = self._attention(sequence)
             output[mask] = (
                 self.post_norm(features[mask] + attended.squeeze(0))
                 if self.post_norm is not None else attended.squeeze(0)
@@ -81,10 +93,7 @@ class patch_attention(spconv.SparseModule,):
         if self.mode == "legacy":
             # Exact shape semantics of the released implementation: every
             # patch forms a separate batch with a one-token sequence.
-            attended, _ = self.multihead_attn(
-                x.features.unsqueeze(1), x.features.unsqueeze(1),
-                x.features.unsqueeze(1), need_weights=False,
-            )
+            attended = self._attention(x.features.unsqueeze(1))
             attended = attended.squeeze(1)
         else:
             attended = self._attend_features(
@@ -246,6 +255,7 @@ class evspsegnet(nn.Module):
         attention_mode = getattr(cfg, "patch_attention", "sequence")
         self.pa2 = patch_attention(
             2*width, (176, 144, 2048), indice_key='pa2', mode=attention_mode,
+            attention_backend=getattr(cfg, "attention_backend", "auto"),
         )
 
         self.conv3 = spconv.SparseSequential(
@@ -259,6 +269,7 @@ class evspsegnet(nn.Module):
         )
         self.pa3 = patch_attention(
             4*width, (88, 72, 512), indice_key='pa3', mode=attention_mode,
+            attention_backend=getattr(cfg, "attention_backend", "auto"),
         )
 
         self.conv4 = spconv.SparseSequential(
@@ -272,6 +283,7 @@ class evspsegnet(nn.Module):
         )
         self.pa4 = patch_attention(
             4*width, (44, 36, 256), indice_key='pa4', mode=attention_mode,
+            attention_backend=getattr(cfg, "attention_backend", "auto"),
         )
 
         # decoder
