@@ -17,6 +17,7 @@ from utils import args
 from utils.eval import evalute, run_test
 from utils.run_manager import RunManager
 from utils.seed import set_seed
+from utils.training_checks import check_loss, check_gradients, check_tensors
 from utils.stcloss import STCLoss
 from utils.tacloss import TrajectoryAwareContrastiveLoss
 from utils.mbtcloss import MotionBidirectionalTrajectoryLoss
@@ -46,6 +47,7 @@ def build_scheduler(optimizer, cfg):
 
 def main():
     args.parse()
+    torch.autograd.set_detect_anomaly(args.cfg.diagnose_numerics)
 
     device = f"cuda:{args.cfg.gpu}"
     torch.cuda.set_device(device)
@@ -108,6 +110,7 @@ def main():
         )
 
         for batch_idx, ev in enumerate(train_dataloader):
+            optimizer.zero_grad(set_to_none=True)
             x = dataset.voxelize_to_sparse(ev, device)
             label = ev["seg_label"].float().to(device)
             p2v_map = ev["p2v_map"].long().to(device)
@@ -118,19 +121,46 @@ def main():
             motion_target = ev["motion_target"].to(device)
             motion_valid = ev["motion_valid"].to(device)
 
-            preds, voxel, auxiliary = net(x)
-            if args.cfg.loss == "stc":
-                loss = criterion(voxel, p2v_map, preds, label)
-                components = {}
-            else:
-                loss, components = criterion(
-                    voxel, p2v_map, preds, label, auxiliary,
-                    ev_locs, instance_ids, motion_target, motion_valid,
+            loss = None
+            components = {}
+            stage = "forward"
+            try:
+                if args.cfg.diagnose_numerics:
+                    check_tensors([("input_features", x.features), ("label", label),
+                                   ("motion_target", motion_target)])
+                preds, voxel, auxiliary = net(x)
+                if args.cfg.diagnose_numerics:
+                    check_tensors([("predictions", preds), *auxiliary.items()])
+                stage = "loss"
+                if args.cfg.loss == "stc":
+                    loss = criterion(voxel, p2v_map, preds, label)
+                else:
+                    loss, components = criterion(
+                        voxel, p2v_map, preds, label, auxiliary,
+                        ev_locs, instance_ids, motion_target, motion_valid,
+                    )
+                check_loss(loss)
+                stage = "backward"
+                loss.backward()
+                grad_norm = check_gradients(net.parameters(), args.cfg.grad_clip_norm)
+                stage = "optimizer_step"
+                optimizer.step()
+                if args.cfg.diagnose_numerics:
+                    stage = "post_step_state"
+                    check_tensors(net.named_parameters())
+                    check_tensors(net.named_buffers())
+            except (FloatingPointError, RuntimeError) as exc:
+                run.log_metric(
+                    epoch, batch_idx, training_error=str(exc), failure_stage=stage,
+                    loss=loss.detach() if loss is not None else None, **components,
+                    events=int(label.numel()), voxels=int(x.features.shape[0]),
+                    cuda_allocated_bytes=torch.cuda.memory_allocated(device),
+                    cuda_reserved_bytes=torch.cuda.memory_reserved(device),
                 )
-
-            optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            optimizer.step()
+                raise RuntimeError(
+                    f"Training stopped at stage={stage}, epoch={epoch}, "
+                    f"batch={batch_idx}; diagnostics: {run.run_dir}/metrics.jsonl"
+                ) from exc
             epoch_loss += loss.item()
 
             pbar.set_postfix(
@@ -140,7 +170,7 @@ def main():
 
             with torch.no_grad():
                 run.log_metric(
-                    epoch, batch_idx, loss=loss.item(),
+                    epoch, batch_idx, loss=loss.item(), grad_norm=grad_norm,
                     lr=optimizer.param_groups[0]["lr"], **components,
                 )
 

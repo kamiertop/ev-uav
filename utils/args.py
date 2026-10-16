@@ -100,6 +100,10 @@ def parse(extra: list[tuple[str, dict[str, Any]]] | None = None) -> argparse.Nam
     )
 
     # ── training ────────────────────────────────────────────────────
+    parser.add_argument("--diagnose_numerics", action="store_true",
+                        help="trace backward NaNs and check inputs, outputs, parameters and buffers; slow")
+    parser.add_argument("--grad_clip_norm", default=0.0, type=float,
+                        help="gradient L2 norm cap; 0 disables clipping, finite checks always enabled")
     parser.add_argument("--epochs", default=50, type=int)
     parser.add_argument("--lr", default=0.01, type=float,
                         help="initial learning rate")
