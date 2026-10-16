@@ -1,6 +1,10 @@
 # 服务器训练命令
 
+更新日期：2026-10-16
+
 以下命令均在项目根目录执行。数据默认读取 `/data/ev-uav`。
+
+研究协议：探索、消融和多种子训练默认关闭自动测试。当前首轮筛选沿用已有 A1 的早停协议：最多 50 轮、patience=10、min_delta=1e-4。固定 50 轮也是可选协议，但所有对照必须一致。
 
 ## 0. 上传后先检查
 
@@ -25,16 +29,19 @@ UV_CACHE_DIR=/tmp/ev-uav-uv-cache uv run python scripts/build_ext.py
 UV_CACHE_DIR=/tmp/ev-uav-uv-cache uv run python train.py \
   --gpu 0 --data_dir /data/ev-uav \
   --run_name smoke_a4 --epochs 1 --train_workers 0 \
-  --patch_attention sequence --motion_gd shallow --loss mbtc
+  --patch_attention sequence --motion_gd shallow --loss mbtc \
+  --no-test_after_train
 ```
 
-检查最后输出不含 CUDA/spconv 错误，并确认新目录中存在：
+确认训练和验证完成、损失没有 NaN、生成 checkpoint；保留完整日志和 `config.json`，记录显存峰值与单轮耗时。可检查最近生成的文件：
 
 ```bash
 find runs -maxdepth 3 -type f | sort | tail -n 20
 ```
 
 ## 2. 第一阶段五组单种子消融
+
+建议先跑 A0、A1、A4，再补齐 A2、A3。所有配置保持相同数据划分、batch size、事件采样上限、优化器和训练轮数。A1 是判断新增方法贡献的关键对照。
 
 可在 3090 和 4090 上并行运行不同配置，但同一配置的计时比较必须使用相同 GPU。
 
@@ -43,15 +50,17 @@ find runs -maxdepth 3 -type f | sort | tail -n 20
 ```bash
 UV_CACHE_DIR=/tmp/ev-uav-uv-cache uv run python train.py \
   --gpu 0 --data_dir /data/ev-uav --run_name a0_official_s37 \
-  --seed 37 --epochs 50 --patch_attention legacy --motion_gd none --loss stc
+  --seed 37 --epochs 50 --patch_attention legacy --motion_gd none --loss stc \
+  --no-test_after_train --early_stopping_patience 10
 ```
 
-### A1：仅修复 Patch Attention
+### A1：修正并增强 Patch Attention
 
 ```bash
 UV_CACHE_DIR=/tmp/ev-uav-uv-cache uv run python train.py \
   --gpu 0 --data_dir /data/ev-uav --run_name a1_attention_s37 \
-  --seed 37 --epochs 50 --patch_attention sequence --motion_gd none --loss stc
+  --seed 37 --epochs 50 --patch_attention sequence --motion_gd none --loss stc \
+  --no-test_after_train --early_stopping_patience 10
 ```
 
 ### A2：仅 MBTC 损失
@@ -59,7 +68,8 @@ UV_CACHE_DIR=/tmp/ev-uav-uv-cache uv run python train.py \
 ```bash
 UV_CACHE_DIR=/tmp/ev-uav-uv-cache uv run python train.py \
   --gpu 0 --data_dir /data/ev-uav --run_name a2_mbtc_s37 \
-  --seed 37 --epochs 50 --patch_attention sequence --motion_gd none --loss mbtc
+  --seed 37 --epochs 50 --patch_attention sequence --motion_gd none --loss mbtc \
+  --no-test_after_train --early_stopping_patience 10
 ```
 
 ### A3：仅 MC-GDSC 结构
@@ -67,7 +77,8 @@ UV_CACHE_DIR=/tmp/ev-uav-uv-cache uv run python train.py \
 ```bash
 UV_CACHE_DIR=/tmp/ev-uav-uv-cache uv run python train.py \
   --gpu 0 --data_dir /data/ev-uav --run_name a3_mcgds_s37 \
-  --seed 37 --epochs 50 --patch_attention sequence --motion_gd shallow --loss stc
+  --seed 37 --epochs 50 --patch_attention sequence --motion_gd shallow --loss stc \
+  --no-test_after_train --early_stopping_patience 10
 ```
 
 ### A4：完整方法
@@ -75,18 +86,11 @@ UV_CACHE_DIR=/tmp/ev-uav-uv-cache uv run python train.py \
 ```bash
 UV_CACHE_DIR=/tmp/ev-uav-uv-cache uv run python train.py \
   --gpu 0 --data_dir /data/ev-uav --run_name a4_full_s37 \
-  --seed 37 --epochs 50 --patch_attention sequence --motion_gd shallow --loss mbtc
+  --seed 37 --epochs 50 --patch_attention sequence --motion_gd shallow --loss mbtc \
+  --no-test_after_train --early_stopping_patience 10
 ```
 
-训练命令默认只使用 train/val 进行模型选择；训练结束后会自动加载最佳 IoU checkpoint 并评估 test split。若只想训练不测试，可显式添加 `--no-test_after_train`。
-
-默认早停参数为验证 IoU 连续 10 个验证轮次没有至少 `1e-4` 的提升时停止。可通过以下参数调整：
-
-```bash
---early_stopping_patience 10 --early_stopping_min_delta 1e-4
-```
-
-设置 `--early_stopping_patience 0` 可禁用早停。
+上述命令仅使用 train/val 进行模型选择。默认不自动测试，早停 patience 为 10；固定轮数时使用 `--early_stopping_patience 0`，不能与早停结果混用。
 
 ## 3. 找到每组最佳验证结果
 
@@ -98,31 +102,35 @@ UV_CACHE_DIR=/tmp/ev-uav-uv-cache uv run python scripts/summarize_runs.py
 
 ## 4. 最终配置运行三个种子
 
-如果 A4 优于 A1/A2/A3，再运行：
+如果 A4 优于 A1/A2/A3，再补齐三个种子。以下示例只补跑 13 和 73，已有 seed 37 结果仅在配置与训练协议完全一致时复用，否则也需重跑。若最终选择 A2 或 A3，使用对应训练配置替换示例：
 
 ```bash
-for seed in 13 37 73; do
+for seed in 13 73; do
   UV_CACHE_DIR=/tmp/ev-uav-uv-cache uv run python train.py \
     --gpu 0 --data_dir /data/ev-uav --run_name "a4_full_s${seed}" \
     --seed "$seed" --epochs 50 \
-    --patch_attention sequence --motion_gd shallow --loss mbtc
+    --patch_attention sequence --motion_gd shallow --loss mbtc \
+    --no-test_after_train --early_stopping_patience 10
 done
 ```
 
 基线 A1 也应运行相同三个种子，才能报告均值和标准差：
 
 ```bash
-for seed in 13 37 73; do
+for seed in 13 73; do
   UV_CACHE_DIR=/tmp/ev-uav-uv-cache uv run python train.py \
     --gpu 0 --data_dir /data/ev-uav --run_name "a1_attention_s${seed}" \
     --seed "$seed" --epochs 50 \
-    --patch_attention sequence --motion_gd none --loss stc
+    --patch_attention sequence --motion_gd none --loss stc \
+    --no-test_after_train --early_stopping_patience 10
 done
 ```
 
 ## 5. 最终测试集评估
 
-先从对应运行目录读取 `config.json`，确保评测参数与训练完全一致。下面以完整方法为例：
+先冻结最终配置、模型选择规则和验证集选出的阈值，不再依据测试结果调参。对最终方案和关键基线的各个预定种子分别评估，报告均值与标准差。
+
+从对应运行目录读取 `config.json`，确保评测参数与训练完全一致。下面以完整方法为例：
 
 ```bash
 UV_CACHE_DIR=/tmp/ev-uav-uv-cache uv run python test.py \
@@ -162,22 +170,42 @@ UV_CACHE_DIR=/tmp/ev-uav-uv-cache uv run python scripts/grid_search.py \
   --losses stc,mbtc --motion_gds none,shallow
 ```
 
-正式运行示例（2×2×3 = 12 组）：
+网格搜索现在默认关闭自动测试，也支持显式 `--no-test_after_train` 和 `--test_after_train`。用 `--patience 10` 保持当前早停协议，或所有对照统一使用 `--patience 0` 固定训练轮数。`--dry_run` 仅生成命令与清单，不训练。
+
+例如预览原 Attention 上的损失对照：
 
 ```bash
-UV_CACHE_DIR=/tmp/ev-uav-uv-cache uv run python scripts/grid_search.py \
-  --gpu 0 --data_dir /data/ev-uav --epochs 50 --train_workers 0 \
-  --run_prefix ablation \
-  --seeds 37 \
-  --losses stc,mbtc \
-  --motion_gds none,shallow \
-  --trajectory_weights 0.1,0.25,0.5
+uv run python scripts/grid_search.py --dry_run \
+  --patch_attentions legacy --motion_gds none --losses stc,mbtc \
+  --seeds 37 --patience 10 --no-test_after_train
 ```
 
-可网格化的参数包括 `losses`、`motion_gds`、`patch_attentions`、`trajectory_weights`、`support_weights`、`motion_direction_weights`、`motion_speed_weights`、`route_weights`、`route_temperatures`、`patience` 和 `max_events_num`。组合数是这些列表长度的乘积；用 `--max_runs N` 可限制前 N 组。
+不要扫描与当前损失无关的权重，以免生成重复实验。
 
-网格搜索默认训练结束自动测试（继承 `train.py` 默认行为），并启用每组的 early stopping。结果汇总：
+## 8. 统一实验预设（显式参数优先）
+
+`--experiment` 只设置 Attention、卷积和损失，不改变训练预算或数据路径。显式指定的参数始终覆盖预设，与参数顺序无关。
+
+| 预设 | Attention | motion_gd | loss |
+|---|---|---|---|
+| a0 | legacy | none | stc |
+| a0_mbtc | legacy | none | mbtc |
+| attention_fix | corrected | none | stc |
+| a1 | sequence | none | stc |
+| a2 | sequence | none | mbtc |
+| a3 | sequence | shallow | stc |
+| a4 | sequence | shallow | mbtc |
+
+`legacy` 保留原行为；`corrected` 仅修正序列组织并隔离样本，保留单头、原 padding，不增加位置编码、LayerNorm 或内部残差；`sequence` 保持现有 A1 的完整增强行为。
 
 ```bash
-UV_CACHE_DIR=/tmp/ev-uav-uv-cache uv run python scripts/summarize_runs.py
+uv run python train.py --experiment a0_mbtc \
+  --data_dir ../ev-uav-data --gpu 0 --train_workers 0 \
+  --run_name a0_mbtc_s37 --seed 37 --epochs 50 \
+  --early_stopping_patience 10 --early_stopping_min_delta 1e-4 \
+  --no-test_after_train
 ```
+
+损失分项用 `--support_weight`、`--trajectory_weight`、`--motion_direction_weight`、`--motion_speed_weight`、`--route_weight` 控制，置 0 可关闭对应项。动态卷积位置用 `--motion_gd none/shallow/encoder/all`，时间尺度用 `--motion_temporal_dilations 1 2 4 8`。只有实际使用该模块或损失的配置，这些参数才有作用。
+
+评估必须使用训练时相同的预设及覆盖参数；特别是 legacy 与 corrected 的权重形状相同，严格加载成功不能证明模式一致。以保存的 `config.json` 为准。布尔选项支持 `--vis` / `--no-vis`，兼容旧式 `--vis False`。

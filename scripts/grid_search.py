@@ -40,15 +40,13 @@ def _csv(text: str, cast):
         raise argparse.ArgumentTypeError(f"invalid list {text!r}") from exc
 
 
-def _flag(name: str, value) -> list[str]:
-    return [name, str(value)]
-
-
 def main() -> int:
     p = argparse.ArgumentParser(
         description="Run sequential Cartesian-product EV-UAV training sweeps.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+    p.add_argument("--test_after_train", action=argparse.BooleanOptionalAction, default=False)
+    p.add_argument("--early_stopping_min_delta", type=float, default=1e-4)
     p.add_argument("--gpu", default="0")
     p.add_argument("--data_dir", default="/data/ev-uav")
     p.add_argument("--epochs", type=int, default=50)
@@ -112,6 +110,8 @@ def main() -> int:
         run_name = f"{args.run_prefix}_{index:03d}_{tag}"
         command = [
             sys.executable, "train.py", "--gpu", args.gpu,
+            "--test_after_train" if args.test_after_train else "--no-test_after_train",
+            "--early_stopping_min_delta", str(args.early_stopping_min_delta),
             "--data_dir", args.data_dir, "--epochs", str(args.epochs),
             "--train_workers", str(args.train_workers), "--run_name", run_name,
             "--seed", str(config["seed"]), "--loss", config["loss"],

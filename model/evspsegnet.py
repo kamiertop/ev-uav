@@ -23,27 +23,29 @@ class patch_attention(spconv.SparseModule,):
 
     def __init__(self, channel,in_sptial_size,att_sptial_size=(11,9,8),indice_key='pa1', mode='sequence'):
         super(patch_attention, self).__init__()
+        if mode not in {"legacy", "corrected", "sequence"}:
+            raise ValueError(f"Unknown attention mode: {mode}")
         self.mode = mode
         maxpool_num = math.log2(int(in_sptial_size[0]/att_sptial_size[0]))
         self.layers = nn.ModuleList()
         for i in range(int(maxpool_num)):
             self.layers.append(spconv.SparseMaxPool3d((2,2,4),stride=(2,2,4),indice_key=indice_key+str(i)))
 
-        num_heads = 1 if mode == "legacy" else (4 if channel % 4 == 0 else 1)
-        self.position_mlp = None if mode == "legacy" else nn.Sequential(
+        num_heads = 1 if mode != "sequence" else (4 if channel % 4 == 0 else 1)
+        self.position_mlp = None if mode != "sequence" else nn.Sequential(
             nn.Linear(3, channel), nn.GELU(), nn.Linear(channel, channel),
         )
-        self.pre_norm = None if mode == "legacy" else nn.LayerNorm(channel)
+        self.pre_norm = None if mode != "sequence" else nn.LayerNorm(channel)
         self.multihead_attn=nn.MultiheadAttention(
             embed_dim=channel, num_heads=num_heads, batch_first=True,
         )
-        self.post_norm = None if mode == "legacy" else nn.LayerNorm(channel)
+        self.post_norm = None if mode != "sequence" else nn.LayerNorm(channel)
         self.inver_layer=nn.ModuleList()
         for i in range(int(maxpool_num)):
             self.inver_layer.append(spconv.SparseInverseConv3d(channel, channel, (2,2,4), indice_key=indice_key+str(int(maxpool_num-1)-i), bias=False,))
         self.conv = spconv.SubMConv3d(
             channel, channel, 1, stride=1,
-            padding=1 if mode == "legacy" else 0, bias=False,
+            padding=1 if mode != "sequence" else 0, bias=False,
         )
 
     def _attend_features(self, features, indices, spatial_shape):
@@ -53,18 +55,22 @@ class patch_attention(spconv.SparseModule,):
         shape = torch.as_tensor(
             spatial_shape, dtype=features.dtype, device=features.device,
         ).clamp_min(1)
-        position = self.position_mlp(coords / shape)
+        position = self.position_mlp(coords / shape) if self.position_mlp is not None else None
         batch_ids = indices[:, 0]
 
         for batch_id in batch_ids.unique(sorted=True):
             mask = batch_ids == batch_id
             # batch_first=True: (batch=1, sequence=patches, channels).
-            sequence = self.pre_norm(features[mask] + position[mask]).unsqueeze(0)
+            sequence = (
+                self.pre_norm(features[mask] + position[mask])
+                if self.pre_norm is not None else features[mask]
+            ).unsqueeze(0)
             attended, _ = self.multihead_attn(
                 sequence, sequence, sequence, need_weights=False,
             )
-            output[mask] = self.post_norm(
-                features[mask] + attended.squeeze(0)
+            output[mask] = (
+                self.post_norm(features[mask] + attended.squeeze(0))
+                if self.post_norm is not None else attended.squeeze(0)
             )
         return output
 

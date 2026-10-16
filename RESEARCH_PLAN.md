@@ -1,6 +1,6 @@
 # EV-UAV 创新方案与实验记录
 
-更新日期：2026-08-13
+更新日期：2026-10-16
 
 ## 1. 研究定位
 
@@ -72,17 +72,19 @@ h_i=y_i(1-S_i^{gt})+(1-y_i)S_i^{pred},
 
 ## 4. 公平实验矩阵
 
-所有模型固定数据划分、种子、50 epoch、Adam、学习率 0.01 线性衰减到 0.001。先使用 seed 37 筛选，再对最终两种配置运行 seed 13/37/73。
+所有模型固定数据划分、种子、最多 50 epoch、Adam、学习率 0.01 线性衰减到 0.001。先使用 seed 37 筛选，再对最终方案和关键基线补齐 seed 13/37/73；配置和训练协议一致的 seed 37 结果可复用。所有探索、消融和多种子训练显式添加 `--no-test_after_train --early_stopping_patience 10`，仅使用验证集选择模型，最多训练 50 轮，统一使用 patience=10、min_delta=1e-4。
 
 | ID | Patch Attention | GDSC | Loss | 目的 |
 |---|---|---|---|---|
 | A0 | legacy | fixed | STC | 严格公开代码行为 |
-| A1 | sequence | fixed | STC | 仅修复 Patch Attention |
+| A1 | sequence | fixed | STC | 修正并增强 Patch Attention |
 | A2 | sequence | fixed | MBTC | 仅损失贡献 |
 | A3 | sequence | MC-GDSC | STC | 仅结构贡献 |
 | A4 | sequence | MC-GDSC | MBTC | 完整方法 |
 
-第二阶段消融只在 A4 有明显收益后进行：
+建议先运行 A0、A1、A4，再补齐 A2、A3。新增方法主要与 A1 比较，避免将 Attention 修正收益归因于 MC-GDSC 或 MBTC。
+
+第二阶段围绕已验证有效的方案做消融；若 A4 有明显收益，可进行：
 
 - `motion_gd = shallow/encoder/all`；
 - 时间膨胀率 `(1,2,3,4)` 与 `(1,2,4,8)`；
@@ -91,10 +93,10 @@ h_i=y_i(1-S_i^{gt})+(1-y_i)S_i^{pred},
 
 ## 5. 成败标准
 
-以下标准针对**本仓库复现基线**，不能只与论文表中数字比较：
+以下标准针对**本仓库复现基线**，不能只与论文表中数字比较；它们是内部投入标准，不保证投稿层级或录用：
 
 - 最低可继续：IoU 提升至少 1 个百分点，且轨迹覆盖或最长连续率相对提升 10%，Fa 不明显恶化；
-- 稳妥投稿：IoU 提升 2 个百分点以上，ACC/Pd 至少一项提升，Fa 不恶化，轨迹指标改善；
+- 优先推进论文验证：IoU 提升 2 个百分点以上，ACC/Pd 至少一项提升，Fa 不恶化，轨迹指标改善；
 - 如果 MC-GDSC 的 A3 不优于 A1，则结构动机未被支持，应停止扩大模块，保留 A2 作为损失方向；
 - 如果 A2 有效而 A4 无额外收益，不能把动态卷积写入最终贡献；
 - 如果只有修复 Attention 的 A1 提升，论文主张只能是复现/缺陷分析，不能宣称新模型有效。
@@ -107,12 +109,25 @@ h_i=y_i(1-S_i^{gt})+(1-y_i)S_i^{pred},
 - `metrics.jsonl`：batch loss、验证 IoU/ACC/轨迹指标；
 - `checkpoints/best_iou_seed*.pt`：验证集选出的 checkpoint。
 
-训练默认启用 early stopping：验证 IoU 连续 10 个验证轮次没有至少 `1e-4` 的提升时停止；训练结束后默认自动使用最佳 IoU checkpoint 评估 test split。可用 `--no-test_after_train` 关闭自动测试，或用 `--early_stopping_patience 0` 禁用早停。
+训练默认启用 early stopping：验证 IoU 连续 10 个验证轮次没有至少 `1e-4` 的提升时停止；训练结束后仅在显式传入 `--test_after_train` 时使用最佳 IoU checkpoint 评估 test split。可用 `--no-test_after_train` 关闭自动测试，或用 `--early_stopping_patience 0` 禁用早停。
 
-训练默认不访问测试集。完成验证集模型选择后，用独立 `test.py` 命令评估一次测试集。不要依据测试结果继续调参。
+上述是代码默认行为，本研究命令显式关闭自动测试，保留统一的早停规则。探索阶段不访问测试集。完成验证集模型选择后，用独立 `test.py` 命令评估一次测试集。不要依据测试结果继续调参。
 
 ## 7. 当前验证状态
 
-已验证：Python 编译、参数解析、数据速度标签生成、Patch Attention 隔离性、MBTC 数值行为和轨迹指标，共 11 个 CPU 单元测试。
+历史会话已验证（本次文档更新未重跑）：Python 编译、参数解析、数据速度标签生成、Patch Attention 隔离性、MBTC 数值行为和轨迹指标，共 11 个 CPU 单元测试。
 
-未验证：当前容器无法访问 NVIDIA 驱动，因此尚未完成 spconv CUDA 前向、反向、显存和真实训练收敛测试。上传服务器后必须先执行 1 epoch smoke test。
+用户已反馈 A1 在服务器完成训练与测试：epoch 27 早停，最佳验证 IoU=0.3945，测试 IoU=0.5452。该日志证明 A1 流程可运行，但不能证明 MC-GDSC/MBTC 有效；后两者仍需服务器验证。本次配置整理通过 14 项 CPU 测试，未运行新的 CUDA 训练。
+
+## 8. 结果与论文证据清单
+
+1. 先完成服务器 1 epoch smoke test，保留完整日志、配置、checkpoint、显存峰值和单轮耗时。
+2. 汇总 A0–A4 的最佳验证结果，并检查训练曲线与失败案例，再决定保留哪些贡献。
+3. 对最终方案和关键基线报告三个种子的均值和标准差，不仅报告最佳种子。
+4. 联合分析轨迹覆盖、最长连续段、碎片化和误检；完全漏检也可能产生很低的碎片化，不能单独据此判断改善。
+5. 补充快速运动、稀疏事件、多目标场景分析和可视化，并在同一 GPU 上测量参数量、延迟和显存。
+6. 冻结配置、checkpoint 选择规则和阈值后，对预先确定的最终模型进行测试集评估。论文报告值与本仓库复现值分开列出。
+
+### 2026-10-16 配置整理
+
+训练新增 `--experiment a0/a0_mbtc/attention_fix/a1/a2/a3/a4` 预设，显式参数覆盖预设。Attention 新增 `corrected` 作为纯序列修正对照，原 `sequence` 保持 A1 的增强结构。网格搜索已支持关闭自动测试，训练与搜索默认均不访问测试集。完整参数示例见 `TRAINING_COMMANDS.md` 第 8 节。当前首轮筛选沿用已有 A1 的早停协议；不能与固定 50 轮结果混用。

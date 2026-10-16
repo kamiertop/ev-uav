@@ -306,3 +306,13 @@ If you reference or build upon this work, please acknowledge our paper as above.
 ## Acknowledgement
 
 The code is based on [HAIS](https://github.com/hustvl/HAIS) and [spconv](https://github.com/traveller59/spconv).
+
+## Ablation experiments / 消融实验
+
+See [TRAINING_COMMANDS.md](TRAINING_COMMANDS.md) for presets, parameter overrides and evaluation protocol.
+
+```bash
+uv run python train.py --experiment a0_mbtc --run_name a0_mbtc_s37 --seed 37 --train_workers 0
+```
+
+Presets: `a0`, `a0_mbtc`, `attention_fix`, `a1`, `a2`, `a3`, `a4`. Explicit flags override presets. Training and grid search default to no test-set evaluation; use `--test_after_train` only after freezing the experimental configuration.

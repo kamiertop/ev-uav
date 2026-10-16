@@ -8,7 +8,27 @@ Usage::
 """
 
 import argparse
+
+def _boolean(value):
+    if isinstance(value, bool):
+        return value
+    if value.lower() in ("true", "1", "yes"):
+        return True
+    if value.lower() in ("false", "0", "no"):
+        return False
+    raise argparse.ArgumentTypeError("expected true or false")
+
 from typing import Any
+
+EXPERIMENTS = {
+    "a0": dict(patch_attention="legacy", motion_gd="none", loss="stc"),
+    "a0_mbtc": dict(patch_attention="legacy", motion_gd="none", loss="mbtc"),
+    "a1": dict(patch_attention="sequence", motion_gd="none", loss="stc"),
+    "a2": dict(patch_attention="sequence", motion_gd="none", loss="mbtc"),
+    "a3": dict(patch_attention="sequence", motion_gd="shallow", loss="stc"),
+    "a4": dict(patch_attention="sequence", motion_gd="shallow", loss="mbtc"),
+    "attention_fix": dict(patch_attention="corrected", motion_gd="none", loss="stc"),
+}
 
 # Module-level singleton — populated by parse()
 cfg: argparse.Namespace | None = None
@@ -27,6 +47,9 @@ def parse(extra: list[tuple[str, dict[str, Any]]] | None = None) -> argparse.Nam
         description="EV-UAV Event Point Cloud Segmentation",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+
+    parser.add_argument("--experiment", choices=EXPERIMENTS,
+                        help="model/loss preset; explicit flags override preset values")
 
     # ── GPU ─────────────────────────────────────────────────────────
     parser.add_argument("--gpu", default="0", type=str, help="CUDA device index")
@@ -52,12 +75,14 @@ def parse(extra: list[tuple[str, dict[str, Any]]] | None = None) -> argparse.Nam
     # ── model ───────────────────────────────────────────────────────
     parser.add_argument("--width", default=12, type=int,
                         help="network width multiplier")
-    parser.add_argument("--block_residual", default=True, type=bool)
+    parser.add_argument("--block_residual", default=True, type=_boolean, nargs="?", const=True)
+    parser.add_argument("--no-block_residual", dest="block_residual", action="store_false")
     parser.add_argument("--block_reps", default=2, type=int)
-    parser.add_argument("--use_coords", default=True, type=bool)
+    parser.add_argument("--use_coords", default=True, type=_boolean, nargs="?", const=True)
+    parser.add_argument("--no-use_coords", dest="use_coords", action="store_false")
     parser.add_argument("--patch_attention", default="sequence",
-                        choices=["sequence", "legacy"],
-                        help="cross-patch attention or released one-token behavior")
+                        choices=["sequence", "legacy", "corrected"],
+                        help="sequence: enhanced; corrected: sequence fix only; legacy: released behavior")
     parser.add_argument(
         "--motion_gd", default="shallow",
         choices=["none", "shallow", "encoder", "all"],
@@ -104,7 +129,7 @@ def parse(extra: list[tuple[str, dict[str, Any]]] | None = None) -> argparse.Nam
     )
     parser.add_argument(
         "--test_after_train", action=argparse.BooleanOptionalAction,
-        default=True,
+        default=False,
         help="evaluate the held-out test split after model selection",
     )
 
@@ -136,9 +161,12 @@ def parse(extra: list[tuple[str, dict[str, Any]]] | None = None) -> argparse.Nam
     parser.add_argument("--min_trajectory_events", default=2, type=int)
 
     # ── evaluation ──────────────────────────────────────────────────
-    parser.add_argument("--eval", default=True, type=bool)
-    parser.add_argument("--vis", default=False, type=bool)
-    parser.add_argument("--roc", default=True, type=bool)
+    parser.add_argument("--eval", default=True, type=_boolean, nargs="?", const=True)
+    parser.add_argument("--no-eval", dest="eval", action="store_false")
+    parser.add_argument("--vis", default=False, type=_boolean, nargs="?", const=True)
+    parser.add_argument("--no-vis", dest="vis", action="store_false")
+    parser.add_argument("--roc", default=True, type=_boolean, nargs="?", const=True)
+    parser.add_argument("--no-roc", dest="roc", action="store_false")
     parser.add_argument("--pd_detT", default=50, type=int,
                         help="detection time window for ROC")
     parser.add_argument("--correct_thresh", default=0.0001, type=float)
@@ -147,12 +175,16 @@ def parse(extra: list[tuple[str, dict[str, Any]]] | None = None) -> argparse.Nam
         help="fraction of GT events recovered for a trajectory bin to count",
     )
     parser.add_argument("--prediction_thresh", default=0.9, type=float)
-    parser.add_argument("--save", default=True, type=bool)
+    parser.add_argument("--save", default=True, type=_boolean, nargs="?", const=True)
+    parser.add_argument("--no-save", dest="save", action="store_false")
 
     if extra:
         for flag, kwargs in extra:
             parser.add_argument(flag, **kwargs)
 
+    selected, _ = parser.parse_known_args()
+    if selected.experiment:
+        parser.set_defaults(**EXPERIMENTS[selected.experiment])
     cfg = parser.parse_args()
     globals()["cfg"] = cfg
     return cfg

@@ -1,9 +1,9 @@
 # EV-UAV 项目会话交接文档
 
-更新时间：2026-09-02
+更新时间：2026-10-16
 
 本文档用于下一个 agent 接续当前项目。请先阅读本文档，再查看
-`RESEARCH_PLAN.md` 和 `TRAINING_COMMANDS.md`，不要重置或覆盖当前 dirty worktree。
+`RESEARCH_PLAN.md` 和 `TRAINING_COMMANDS.md`，以 `git status --short` 确认当前工作区状态，不要重置或覆盖已有修改。
 
 ## 1. 用户目标
 
@@ -93,25 +93,25 @@ MBTC 包含：
 - `dataset/basedataset.py`：collate motion target/valid；
 - `dataset/ev_uav.py`：缓存数据、排序 npz、生成轨迹速度 target 和 valid mask；
 - `model/basemodel.py`：`MotionConditionedGDConv`，GDBlock fixed/motion 模式；
-- `model/evspsegnet.py`：`motion_gd=none/shallow/encoder/all`、各向异性 temporal dilation、sequence/legacy Patch Attention、auxiliary motion/routing 输出、loss 分支；
+- `model/evspsegnet.py`：`motion_gd=none/shallow/encoder/all`、各向异性 temporal dilation、sequence/legacy/corrected Patch Attention、auxiliary motion/routing 输出、loss 分支；
 - `utils/mbtcloss.py`：新 MBTC；
 - `utils/tacloss.py`：历史 TACL 原型；
 - `utils/args.py`：默认 data path、run name、Patch Attention、motion、loss、MBTC、轨迹指标等参数；并修复 `args.parse()` 设置 module-level `utils.args.cfg`；
 - `utils/eval.py`：严格 checkpoint architecture loading、轨迹指标、DataLoader workers/pin memory；
-- `train.py`：支持 `stc/tacl/mbtc`、run prefix、默认不自动 test、验证记录轨迹指标；
+- `train.py`：支持 `stc/tacl/mbtc`、run prefix、支持训练后自动 test、验证记录轨迹指标；
 - `test.py`：输出 IoU/ACC/Pd/Fa/轨迹指标；
 - `scripts/summarize_runs.py`：汇总每个 run 最佳验证 IoU 和轨迹指标；
 - `tests/test_trajectory_components.py`、`tests/test_eval_metrics.py`：单元测试；
 - `RESEARCH_PLAN.md`：完整研究计划；
 - `TRAINING_COMMANDS.md`：服务器训练命令。
 
-最新改动：`train.py` 已加入基于验证 IoU 的 early stopping；`utils/args.py` 中 `test_after_train` 默认改为开启。默认连续 10 个验证轮次无至少 `1e-4` 提升即停止，并在结束后自动测试最佳 IoU checkpoint。使用 `--no-test_after_train` 可关闭自动测试，使用 `--early_stopping_patience 0` 可禁用早停。
+当前代码默认行为：`train.py` 已加入基于验证 IoU 的 early stopping；`utils/args.py` 中 `test_after_train` 默认关闭。默认连续 10 个验证轮次无至少 `1e-4` 提升即停止，仅在显式传入 `--test_after_train` 时测试最佳 IoU checkpoint。使用 `--no-test_after_train` 可关闭自动测试，使用 `--early_stopping_patience 0` 可禁用早停。探索、消融和多种子训练必须显式添加 `--no-test_after_train`；当前筛选对照统一使用 `--early_stopping_patience 10`，最多 50 轮；固定轮数协议需所有对照一致。
 
-工作区当前是 dirty，尚未提交；不要执行 `git reset --hard`、`git checkout --` 等会覆盖改动的命令。
+2026-10-16 文档更新前检查工作区为干净状态；后续接续时应重新检查，不能沿用旧会话的 dirty 状态判断。不要执行 `git reset --hard`、`git checkout --` 等会覆盖改动的命令。
 
 ## 6. 已完成验证
 
-已运行并通过：
+历史会话已运行并通过（本次仅修改文档，未重新运行）：
 
 ```bash
 UV_CACHE_DIR=/tmp/ev-uav-uv-cache uv run python -m unittest discover -s tests -v
@@ -133,7 +133,9 @@ UV_CACHE_DIR=/tmp/ev-uav-uv-cache uv run python -m py_compile \
 
 ## 7. 尚未完成与当前阻塞
 
-尚未在真实 CUDA/spconv 环境完成：
+用户已反馈 A1 在服务器完成 27 轮训练并早停：最佳验证 IoU=0.3945，测试 IoU=0.5452。该运行采用 patience=10、min_delta=1e-4，且使用当时默认的自动测试。后续对照沿用相同早停协议，仅使用验证集筛选。
+
+创新方法尚未在真实 CUDA/spconv 环境完成：
 
 - 1 epoch smoke test；
 - 显存、索引、HAIS_OP、前向/反向兼容性验证；
@@ -167,7 +169,8 @@ UV_CACHE_DIR=/tmp/ev-uav-uv-cache uv run python scripts/build_ext.py
 UV_CACHE_DIR=/tmp/ev-uav-uv-cache uv run python train.py \
   --gpu 0 --data_dir /data/ev-uav \
   --run_name smoke_a4 --epochs 1 --train_workers 0 \
-  --patch_attention sequence --motion_gd shallow --loss mbtc
+  --patch_attention sequence --motion_gd shallow --loss mbtc \
+  --no-test_after_train
 ```
 
 确认无 CUDA/spconv 错误并生成 checkpoint 后，再进行正式实验。
@@ -180,7 +183,7 @@ UV_CACHE_DIR=/tmp/ev-uav-uv-cache uv run python train.py \
 - A3：`--patch_attention sequence --motion_gd shallow --loss stc`
 - A4：`--patch_attention sequence --motion_gd shallow --loss mbtc`
 
-完整命令见 `TRAINING_COMMANDS.md`。所有配置保持相同数据划分、seed、epoch、batch size、`max_events_num` 和优化器。
+推荐先跑 A0、A1、A4，再补齐 A2、A3；A1 是区分 Attention 修正与新增方法贡献的关键对照。所有正式训练显式添加 `--no-test_after_train --early_stopping_patience 10`。完整命令见 `TRAINING_COMMANDS.md`。所有配置保持相同数据划分、seed、epoch、batch size、`max_events_num` 和优化器。
 
 ### 8.4 结果汇总
 
@@ -196,8 +199,10 @@ UV_CACHE_DIR=/tmp/ev-uav-uv-cache uv run python scripts/summarize_runs.py
 
 ## 9. 结果判定规则
 
+以下是内部研究投入标准，不保证投稿层级或录用。轨迹碎片化必须结合覆盖率和最长连续率判断，避免将完全漏检误认为连续性改善。
+
 - 最低继续线：相对本仓库复现 baseline 的 IoU 至少提升 1 个百分点，且轨迹覆盖或最长连续率相对提升约 10%，Fa 不明显恶化；
-- 稳妥投稿线：IoU 提升 2 个百分点以上，ACC/Pd 至少一项提升，Fa 不恶化，同时轨迹指标改善；
+- 优先推进论文验证线：IoU 提升 2 个百分点以上，ACC/Pd 至少一项提升，Fa 不恶化，同时轨迹指标改善；
 - A3 不优于 A1：不要扩大动态卷积路线，保留 MBTC 损失方向；
 - A2 有效但 A4 无额外收益：最终论文不要把 MC-GDSC 列为有效主贡献；
 - 只有 A1 提升：只能写成 Patch Attention 复现/缺陷分析，不能宣称完整新模型有效。
@@ -214,8 +219,14 @@ UV_CACHE_DIR=/tmp/ev-uav-uv-cache uv run python scripts/summarize_runs.py
 ## 11. 下一个 agent 的第一步
 
 1. 阅读本文件、`RESEARCH_PLAN.md`、`TRAINING_COMMANDS.md`；
-2. 执行 `git status --short`，确认不要覆盖现有修改；
+2. 执行 `git status --short`，确认当前状态并保留现有修改；
 3. 优先等待用户从服务器反馈 smoke test 日志；
 4. 若用户已上传代码但尚未训练，指导其执行第 8.1 和 8.2 节命令；
 5. 若 smoke test 报错，先定位 CUDA/spconv/HAIS_OP、张量 shape、索引或显存问题，再考虑修改代码；
 6. 若已有 A0–A4 日志，使用 `scripts/summarize_runs.py` 汇总并据结果决定最终论文主线，不预设 MBTC 或 MC-GDSC 一定有效。
+
+### 2026-10-16 配置整理
+
+训练新增 `--experiment a0/a0_mbtc/attention_fix/a1/a2/a3/a4` 预设，显式参数覆盖预设。Attention 新增 `corrected` 作为纯序列修正对照，原 `sequence` 保持 A1 的增强结构。网格搜索已支持关闭自动测试，训练与搜索默认均不访问测试集。完整参数示例见 `TRAINING_COMMANDS.md` 第 8 节。当前首轮筛选沿用已有 A1 的早停协议；不能与固定 50 轮结果混用。
+
+本次配置整理验证：14 项 CPU 单元测试通过，网格搜索两组 dry-run 通过，未新增 CUDA 训练结果。用户当前优先尝试 a0_mbtc，并需同协议 a0 对照支撑损失贡献。

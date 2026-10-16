@@ -53,6 +53,25 @@ class MotionTargetTest(unittest.TestCase):
 
 
 class PatchAttentionTest(unittest.TestCase):
+    def test_corrected_preserves_legacy_parameters_and_isolates_samples(self):
+        torch.manual_seed(4)
+        legacy = patch_attention(8, (11, 9, 8), mode="legacy")
+        corrected = patch_attention(8, (11, 9, 8), mode="corrected")
+        corrected.load_state_dict(legacy.state_dict(), strict=True)
+        features = torch.randn(4, 8)
+        indices = torch.tensor([[0, 0, 0, 0], [0, 1, 0, 0],
+                                [1, 0, 0, 0], [1, 1, 0, 0]])
+        actual = corrected._attend_features(features, indices, [2, 1, 1])
+        expected, _ = legacy.multihead_attn(features[:2].unsqueeze(0),
+                                            features[:2].unsqueeze(0),
+                                            features[:2].unsqueeze(0))
+        torch.testing.assert_close(actual[:2], expected.squeeze(0))
+        changed = features.clone()
+        changed[2:] += 100
+        torch.testing.assert_close(actual[:2], corrected._attend_features(
+            changed, indices, [2, 1, 1])[:2])
+
+
     def test_samples_do_not_leak_into_each_other(self):
         torch.manual_seed(4)
         module = patch_attention(8, (11, 9, 8), mode="sequence")
