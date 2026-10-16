@@ -2,16 +2,10 @@ import torch
 from contextlib import nullcontext
 from torch.nn.attention import sdpa_kernel, SDPBackend
 import torch.nn as nn
-import torch.nn.functional as torch_f
 import spconv.pytorch as spconv
 import functools
-from spconv.pytorch import functional as Fsp
 from model.basemodel import GDBlock
-import HAIS_OP
-from utils import args as _args
 import math
-import os
-# os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
 class patch_attention(spconv.SparseModule,):
     """Self-attention over pooled sparse patches, independently per sample.
@@ -120,9 +114,6 @@ def post_act_block(
     algo=None,
     dilations=(1, 2, 3, 4),
     ad_channels=16,
-    gd_mode='fixed',
-    route_temperature=1.0,
-    motion_speed_scale=0.2,
 ):
 
     if conv_type == 'subm':
@@ -143,9 +134,6 @@ def post_act_block(
             indice_key=indice_key,
             bias=False,
             ad_channels=ad_channels,
-            mode=gd_mode,
-            route_temperature=route_temperature,
-            motion_speed_scale=motion_speed_scale,
         )
 
     else:
@@ -211,36 +199,12 @@ class evspsegnet(nn.Module):
             norm_fn(width),
             nn.ReLU(),
         )
-        motion_gd = getattr(cfg, "motion_gd", "shallow")
-        route_temperature = getattr(cfg, "route_temperature", 1.0)
-        motion_speed_scale = getattr(cfg, "motion_speed_scale", 0.2)
-        temporal_dilations = getattr(
-            cfg, "motion_temporal_dilations", (1, 2, 4, 8),
-        )
-        motion_dilations = tuple(
-            (spatial, spatial, temporal)
-            for spatial, temporal in zip((1, 2, 3, 4), temporal_dilations)
-        )
-
-        def block(*block_args, gd_stage=None, **block_kwargs):
-            use_motion = (
-                motion_gd == "all"
-                or (motion_gd == "encoder" and gd_stage and gd_stage.startswith("encoder"))
-                or (motion_gd == "shallow" and gd_stage == "encoder1")
-            )
-            return post_act_block(
-                *block_args,
-                gd_mode="motion" if use_motion else "fixed",
-                dilations=motion_dilations if use_motion else (1, 2, 3, 4),
-                route_temperature=route_temperature,
-                motion_speed_scale=motion_speed_scale,
-                **block_kwargs,
-            )
+        block = post_act_block
 
         self.conv1 = spconv.SparseSequential(
             block(
                 width, width, 3, norm_fn=norm_fn, padding=1,
-                indice_key='subm1', conv_type='gd', gd_stage='encoder1',
+                indice_key='subm1', conv_type='gd',
             ),
         )
 
@@ -249,7 +213,6 @@ class evspsegnet(nn.Module):
             block(
                 2*width, 2*width, 3, norm_fn=norm_fn, padding=1,
                 indice_key='subm2', conv_type='gd', ad_channels=16,
-                gd_stage='encoder2',
             ),
         )
         attention_mode = getattr(cfg, "patch_attention", "sequence")
@@ -264,7 +227,6 @@ class evspsegnet(nn.Module):
             block(
                 4*width, 4*width, 3, norm_fn=norm_fn, padding=1,
                 indice_key='subm3', conv_type='gd', ad_channels=8,
-                gd_stage='encoder3',
             ),
         )
         self.pa3 = patch_attention(
@@ -278,7 +240,6 @@ class evspsegnet(nn.Module):
             block(
                 4*width, 4*width, 3, norm_fn=norm_fn, padding=1,
                 indice_key='subm4', conv_type='gd', ad_channels=0,
-                gd_stage='encoder4',
             ),
         )
         self.pa4 = patch_attention(
@@ -290,7 +251,7 @@ class evspsegnet(nn.Module):
         self.conv_up_t4 = SparseBasicBlock(4*width, 4*width, indice_key='subm4', norm_fn=norm_fn)
         self.conv_up_m4 = block(
             8*width, 4*width, 3, norm_fn=norm_fn, padding=1,
-            indice_key='subm4', conv_type='gd', gd_stage='decoder4',
+            indice_key='subm4', conv_type='gd',
         )
         self.inv_conv4 = block(4*width, 4*width, 3, norm_fn=norm_fn, indice_key='spconv4', conv_type='inverseconv')
 
@@ -298,7 +259,7 @@ class evspsegnet(nn.Module):
         self.conv_up_t3 = SparseBasicBlock(4*width, 4*width, indice_key='subm3', norm_fn=norm_fn)
         self.conv_up_m3 = block(
             8*width, 4*width, 3, norm_fn=norm_fn, padding=1,
-            indice_key='subm3', conv_type='gd', gd_stage='decoder3',
+            indice_key='subm3', conv_type='gd',
         )
         self.inv_conv3 = block(4*width, 2*width, 3, norm_fn=norm_fn, indice_key='spconv3', conv_type='inverseconv')
 
@@ -306,7 +267,7 @@ class evspsegnet(nn.Module):
         self.conv_up_t2 = SparseBasicBlock(2*width, 2*width, indice_key='subm2', norm_fn=norm_fn)
         self.conv_up_m2 = block(
             4*width, 2*width, 3, norm_fn=norm_fn,
-            indice_key='subm2', conv_type='gd', gd_stage='decoder2',
+            indice_key='subm2', conv_type='gd',
         )
         self.inv_conv2 = block(2*width, width, 3, norm_fn=norm_fn, indice_key='spconv2', conv_type='inverseconv')
 
@@ -314,13 +275,13 @@ class evspsegnet(nn.Module):
         self.conv_up_t1 = SparseBasicBlock(width, width, indice_key='subm1', norm_fn=norm_fn)
         self.conv_up_m1 = block(
             2*width, width, 3, norm_fn=norm_fn,
-            indice_key='subm1', conv_type='gd', gd_stage='decoder1',
+            indice_key='subm1', conv_type='gd',
         )
 
         self.conv5 = spconv.SparseSequential(
             block(
                 width, width, 3, norm_fn=norm_fn, padding=1,
-                indice_key='subm1', conv_type='gd', gd_stage='refine',
+                indice_key='subm1', conv_type='gd',
             )
         )
 
@@ -328,45 +289,7 @@ class evspsegnet(nn.Module):
             nn.Linear(width, 1),
             nn.Sigmoid()
         )
-        # Training-only auxiliary predictions used by TACL.  They are kept
-        # lightweight and can be ignored when using the original STC loss.
-        loss_name = getattr(cfg, "loss", "stc")
-        embedding_dim = getattr(cfg, "embedding_dim", 8)
-        self.trajectory_embedding = (
-            nn.Linear(width, embedding_dim) if loss_name == "tacl" else None
-        )
-        self.trajectory_motion = (
-            nn.Linear(width, 2)
-            if loss_name in {"tacl", "mbtc"} else None
-        )
-        self.motion_speed_scale = motion_speed_scale
-        self.motion_gd = motion_gd
-        self._motion_blocks = self._collect_motion_blocks()
 
-    def _collect_motion_blocks(self):
-        blocks = []
-        for module in self.modules():
-            if isinstance(module, GDBlock) and module.motion_prediction is not None:
-                blocks.append(module)
-            elif isinstance(module, GDBlock):
-                gdconv = module.gdconv[0]
-                if hasattr(gdconv, "motion_head"):
-                    blocks.append(module)
-        return blocks
-
-    @staticmethod
-    def _routing_summary(blocks):
-        routing = [block.routing_weights for block in blocks]
-        routing = [weights for weights in routing if weights is not None]
-        if not routing:
-            return None, None
-        distributions = torch.stack([weights.mean(dim=0) for weights in routing])
-        entropies = torch.stack([
-            -(weights.clamp_min(1e-8) * weights.clamp_min(1e-8).log())
-            .sum(dim=1).mean()
-            for weights in routing
-        ])
-        return distributions.mean(dim=0), entropies.mean()
     def UR_block_forward(self, x_lateral, x_bottom, conv_t, conv_m, conv_inv):
         x_trans = conv_t(x_lateral)
         x = x_trans
@@ -411,38 +334,9 @@ class evspsegnet(nn.Module):
         x_up1 = self.UR_block_forward(x_conv1, x_up2, self.conv_up_t1, self.conv_up_m1, self.conv5)
 
         features = x_up1.features
-        output = self.semantic_linear(features)
+        # Retain the Sequential and its state_dict keys for existing checkpoints.
+        logits = self.semantic_linear[0](features)
+        output = self.semantic_linear[1](logits)
         voxel = x_up1.replace_feature(output)
-        shallow_motion = None
-        if self._motion_blocks:
-            candidate = self._motion_blocks[0].motion_prediction
-            if candidate is not None:
-                shallow_motion = candidate
-        fallback_motion = None
-        if self.trajectory_motion is not None:
-            fallback_motion = (
-                torch.tanh(self.trajectory_motion(features))
-                * self.motion_speed_scale
-            )
-        route_distribution, route_entropy = self._routing_summary(self._motion_blocks)
-        shallow_routing = None
-        if self._motion_blocks:
-            candidate = self._motion_blocks[0].routing_weights
-            if candidate is not None:
-                shallow_routing = candidate
-        auxiliary = {
-            "embedding": (
-                torch_f.normalize(
-                    self.trajectory_embedding(features), dim=-1, eps=1e-6,
-                )
-                if self.trajectory_embedding is not None else None
-            ),
-            # The final head is aligned with x_up1 and therefore with p2v_map.
-            # The local router motion is exposed separately for diagnostics.
-            "motion": fallback_motion if fallback_motion is not None else shallow_motion,
-            "local_motion": shallow_motion,
-            "routing": shallow_routing,
-            "route_distribution": route_distribution,
-            "route_entropy": route_entropy,
-        }
+        auxiliary = {"segmentation_logits": logits}
         return output,voxel,auxiliary

@@ -12,10 +12,11 @@ from utils.eval import run_test
 
 
 def main():
-    args.parse()
+    args.parse(extra=[("--split", dict(default="test", choices=["val", "test"],
+                                     help="use val for model selection; test only after freezing configuration"))])
     device = f"cuda:{args.cfg.gpu}"
     torch.cuda.set_device(device)
-    results = run_test(args.cfg.model_path, args.cfg, device=device)
+    results = run_test(args.cfg.model_path, args.cfg, device=device, split=args.cfg.split)
 
     if "pd" in results:
         print(f"iou={results['iou']:.4f}  seg_acc={results['seg_acc']:.4f}  "

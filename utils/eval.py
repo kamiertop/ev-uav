@@ -10,12 +10,14 @@ import tqdm
 from utils import args as _args
 
 
-def run_test(model_path: str, cfg, *, device: str = "cuda:0") -> dict:
-    """Load a checkpoint and evaluate on the test set.
+def run_test(model_path: str, cfg, *, device: str = "cuda:0", split: str = "test") -> dict:
+    """Load a checkpoint and evaluate on a held-out split (test by default).
 
     Returns a dict with keys ``iou``, ``seg_acc``, and optionally
     ``pd`` / ``fa`` (when ``cfg.roc`` is enabled).
     """
+    if split not in {"val", "test"}:
+        raise ValueError("evaluation split must be val or test")
     from dataset.ev_uav import EvUAV
     from model.evspsegnet import evspsegnet
 
@@ -25,12 +27,12 @@ def run_test(model_path: str, cfg, *, device: str = "cuda:0") -> dict:
     except RuntimeError as error:
         raise RuntimeError(
             "Checkpoint architecture does not match the evaluation flags. "
-            "Use the same --patch_attention, --motion_gd, --loss, and --width "
+            "Use the same --patch_attention and --width "
             "stored in the run's config.json."
         ) from error
-    print(f"[eval] Loaded checkpoint: {model_path}")
+    print(f"[eval] Split: {split}; loaded checkpoint: {model_path}")
 
-    dataset = EvUAV(cfg, mode="test")
+    dataset = EvUAV(cfg, mode=split)
     loader = torch.utils.data.DataLoader(
         dataset, batch_size=cfg.batch_size,
         collate_fn=dataset.custom_collate,
@@ -40,7 +42,7 @@ def run_test(model_path: str, cfg, *, device: str = "cuda:0") -> dict:
 
     evaluator = evalute(cfg)
     pbar = tqdm.tqdm(
-        total=len(loader), desc="Test", unit="video",
+        total=len(loader), desc=split.capitalize(), unit="video",
         unit_scale=True, position=0, leave=True,
     )
 

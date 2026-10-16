@@ -2,12 +2,14 @@
 
 # 🚁 基于事件相机的微小目标检测：基准数据集与基线
 
+> **当前工作区是基于官方代码修改的研究版本。** 接手先读 [NEXT_STEPS.md](NEXT_STEPS.md)，当前实验协议与命令见 [TRAINING_COMMANDS.md](TRAINING_COMMANDS.md)。下方摘要和基准介绍描述原论文，不代表新增风险损失已取得相同或更好的结果。
+
 <p align="center">
 <img src="imgs/logo.png"  width='800' />
  </a>
 </p>
 
-论文 "Event-based Tiny Object Detection: A Benchmark Dataset and Baseline"（ICCV 2025）的官方实现。[论文链接](https://arxiv.org/abs/2506.23575)
+基于论文 "Event-based Tiny Object Detection: A Benchmark Dataset and Baseline"（ICCV 2025）的官方实现进行修改。[论文链接](https://arxiv.org/abs/2506.23575)
 
 ## 🌟 摘要
 
@@ -313,10 +315,12 @@ uv run python test.py --model_path runs/train_xxx/checkpoints/best_iou_seed37.pt
 
 ## Ablation experiments / 消融实验
 
-See [TRAINING_COMMANDS.md](TRAINING_COMMANDS.md) for presets, parameter overrides and evaluation protocol.
+Current workflow: [NEXT_STEPS.md](NEXT_STEPS.md). Training and validation commands: [TRAINING_COMMANDS.md](TRAINING_COMMANDS.md). Method survey: [ML_METHOD_SURVEY.md](ML_METHOD_SURVEY.md).
 
 ```bash
-uv run python train.py --experiment a0_mbtc --run_name a0_mbtc_s37 --seed 37 --train_workers 0
+uv run python train.py --experiment r3_term --run_name r3_term_s37 \
+  --seed 37 --epochs 50 --train_workers 0 \
+  --early_stopping_patience 0 --no-test_after_train
 ```
 
-Presets: `a0`, `a0_mbtc`, `attention_fix`, `a1`, `a2`, `a3`, `a4`. Explicit flags override presets. Training and grid search default to no test-set evaluation; use `--test_after_train` only after freezing the experimental configuration.
+Presets: `a0`, `attention_fix`, `a1`, `r1_event`, `r2_balanced`, `r3_term`. Explicit flags override presets. Default training uses A1 with STC. Use `test.py --split val` during exploration; test-set evaluation follows configuration freeze.

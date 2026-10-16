@@ -2,11 +2,13 @@ English | [简体中文](README.zh-CN.md)
 
 # 🚁 Event-based Tiny Object Detection: A Benchmark Dataset and Baseline
 
+> **Current workspace:** a modified research version based on the official implementation. Start with [NEXT_STEPS.md](NEXT_STEPS.md) for current status and [TRAINING_COMMANDS.md](TRAINING_COMMANDS.md) for the active protocol. The abstract and benchmark description below describe the original paper, not results of the new risk losses.
+
 <p align="center">
 <img src="imgs/logo.png"  width='800' />
  </a>
 </p>
-The official implementation of "Event-based Tiny Object Detection: A Benchmark Dataset and Baseline" (ICCV 2025) [Paper](https://arxiv.org/abs/2506.23575)
+Based on the official implementation of "Event-based Tiny Object Detection: A Benchmark Dataset and Baseline" (ICCV 2025). [Paper](https://arxiv.org/abs/2506.23575)
 
 ## 🌟 Abstract
 
@@ -309,10 +311,12 @@ The code is based on [HAIS](https://github.com/hustvl/HAIS) and [spconv](https:/
 
 ## Ablation experiments / 消融实验
 
-See [TRAINING_COMMANDS.md](TRAINING_COMMANDS.md) for presets, parameter overrides and evaluation protocol.
+Current workflow: [NEXT_STEPS.md](NEXT_STEPS.md). Training and validation commands: [TRAINING_COMMANDS.md](TRAINING_COMMANDS.md). Method survey: [ML_METHOD_SURVEY.md](ML_METHOD_SURVEY.md).
 
 ```bash
-uv run python train.py --experiment a0_mbtc --run_name a0_mbtc_s37 --seed 37 --train_workers 0
+uv run python train.py --experiment r3_term --run_name r3_term_s37 \
+  --seed 37 --epochs 50 --train_workers 0 \
+  --early_stopping_patience 0 --no-test_after_train
 ```
 
-Presets: `a0`, `a0_mbtc`, `attention_fix`, `a1`, `a2`, `a3`, `a4`. Explicit flags override presets. Training and grid search default to no test-set evaluation; use `--test_after_train` only after freezing the experimental configuration.
+Presets: `a0`, `attention_fix`, `a1`, `r1_event`, `r2_balanced`, `r3_term`. Explicit flags override presets. Default training uses A1 with STC. Use `test.py --split val` during exploration; test-set evaluation follows configuration freeze.

@@ -19,8 +19,7 @@ from utils.run_manager import RunManager
 from utils.seed import set_seed
 from utils.training_checks import check_loss, check_gradients, check_tensors
 from utils.stcloss import STCLoss
-from utils.tacloss import TrajectoryAwareContrastiveLoss
-from utils.mbtcloss import MotionBidirectionalTrajectoryLoss
+from utils.trajectory_risk import STCTrajectoryRiskLoss
 
 
 def build_optimizer(net, cfg):
@@ -86,10 +85,10 @@ def main():
     # ── loss / optim / scheduler ────────────────────────────────────
     if args.cfg.loss == "stc":
         criterion = STCLoss(k=args.cfg.k, t=args.cfg.t, cfg=args.cfg).to(device)
-    elif args.cfg.loss == "tacl":
-        criterion = TrajectoryAwareContrastiveLoss(args.cfg).to(device)
-    else:
-        criterion = MotionBidirectionalTrajectoryLoss(args.cfg).to(device)
+    elif args.cfg.loss == "stc_risk":
+        criterion = STCTrajectoryRiskLoss(
+            STCLoss(k=args.cfg.k, t=args.cfg.t, cfg=args.cfg), args.cfg,
+        ).to(device)
     optimizer = build_optimizer(net, args.cfg)
     scheduler = build_scheduler(optimizer, args.cfg)
 
@@ -118,16 +117,13 @@ def main():
             instance_ids = torch.as_tensor(
                 ev["idx_label"], device=device, dtype=torch.long,
             )
-            motion_target = ev["motion_target"].to(device)
-            motion_valid = ev["motion_valid"].to(device)
 
             loss = None
             components = {}
             stage = "forward"
             try:
                 if args.cfg.diagnose_numerics:
-                    check_tensors([("input_features", x.features), ("label", label),
-                                   ("motion_target", motion_target)])
+                    check_tensors([("input_features", x.features), ("label", label)])
                 preds, voxel, auxiliary = net(x)
                 if args.cfg.diagnose_numerics:
                     check_tensors([("predictions", preds), *auxiliary.items()])
@@ -137,7 +133,7 @@ def main():
                 else:
                     loss, components = criterion(
                         voxel, p2v_map, preds, label, auxiliary,
-                        ev_locs, instance_ids, motion_target, motion_valid,
+                        ev_locs, instance_ids,
                     )
                 check_loss(loss)
                 stage = "backward"

@@ -8,6 +8,7 @@ Usage::
 """
 
 import argparse
+import math
 
 def _boolean(value):
     if isinstance(value, bool):
@@ -21,13 +22,12 @@ def _boolean(value):
 from typing import Any
 
 EXPERIMENTS = {
-    "a0": dict(patch_attention="legacy", motion_gd="none", loss="stc"),
-    "a0_mbtc": dict(patch_attention="legacy", motion_gd="none", loss="mbtc"),
-    "a1": dict(patch_attention="sequence", motion_gd="none", loss="stc"),
-    "a2": dict(patch_attention="sequence", motion_gd="none", loss="mbtc"),
-    "a3": dict(patch_attention="sequence", motion_gd="shallow", loss="stc"),
-    "a4": dict(patch_attention="sequence", motion_gd="shallow", loss="mbtc"),
-    "attention_fix": dict(patch_attention="corrected", motion_gd="none", loss="stc"),
+    "a0": dict(patch_attention="legacy", loss="stc"),
+    "a1": dict(patch_attention="sequence", loss="stc"),
+    "r1_event": dict(patch_attention="sequence", loss="stc_risk", risk_mode="event"),
+    "r2_balanced": dict(patch_attention="sequence", loss="stc_risk", risk_mode="balanced"),
+    "r3_term": dict(patch_attention="sequence", loss="stc_risk", risk_mode="term"),
+    "attention_fix": dict(patch_attention="corrected", loss="stc"),
 }
 
 # Module-level singleton — populated by parse()
@@ -85,22 +85,6 @@ def parse(extra: list[tuple[str, dict[str, Any]]] | None = None) -> argparse.Nam
     parser.add_argument("--patch_attention", default="sequence",
                         choices=["sequence", "legacy", "corrected"],
                         help="sequence: enhanced; corrected: sequence fix only; legacy: released behavior")
-    parser.add_argument(
-        "--motion_gd", default="shallow",
-        choices=["none", "shallow", "encoder", "all"],
-        help="where to replace fixed GDSC by motion-conditioned GDSC",
-    )
-    parser.add_argument("--route_temperature", default=1.0, type=float)
-    parser.add_argument(
-        "--motion_speed_scale", default=1.5, type=float,
-        help="maximum predicted velocity magnitude in pixels/ms",
-    )
-    parser.add_argument(
-        "--motion_temporal_dilations", nargs=4, default=[1, 2, 4, 8], type=int,
-        metavar=("T1", "T2", "T3", "T4"),
-        help="temporal dilation of the four motion-conditioned branches",
-    )
-
     # ── training ────────────────────────────────────────────────────
     parser.add_argument("--diagnose_numerics", action="store_true",
                         help="trace backward NaNs and check inputs, outputs, parameters and buffers; slow")
@@ -115,8 +99,8 @@ def parse(extra: list[tuple[str, dict[str, Any]]] | None = None) -> argparse.Nam
     parser.add_argument("--scheduler", default="linear",
                         choices=["linear", "step", "none"])
     parser.add_argument(
-        "--loss", default="mbtc", choices=["stc", "tacl", "mbtc"],
-        help="original STC, legacy TACL prototype, or proposed MBTC loss",
+        "--loss", default="stc", choices=["stc", "stc_risk"],
+        help="STC baseline or STC plus foreground trajectory risk",
     )
     parser.add_argument("--k", default=3, type=int,
                         help="spatial correlation kernel size")
@@ -139,32 +123,16 @@ def parse(extra: list[tuple[str, dict[str, Any]]] | None = None) -> argparse.Nam
         help="evaluate the held-out test split after model selection",
     )
 
-    # TACL: classification, instance continuity, and local motion priors.
-    parser.add_argument("--embedding_dim", default=8, type=int)
-    parser.add_argument("--focal_gamma", default=2.0, type=float)
-    parser.add_argument("--tversky_alpha", default=0.6, type=float,
-                        help="false-positive coefficient")
-    parser.add_argument("--tversky_beta", default=0.4, type=float,
-                        help="false-negative coefficient")
-    parser.add_argument("--pos_balance_max", default=8.0, type=float)
-    parser.add_argument("--hard_pos_weight", default=1.0, type=float)
-    parser.add_argument("--hard_neg_weight", default=2.0, type=float)
-    parser.add_argument("--tversky_weight", default=1.0, type=float)
-    parser.add_argument("--instance_weight", default=0.1, type=float)
-    parser.add_argument("--motion_weight", default=0.1, type=float)
-    parser.add_argument("--embedding_margin", default=1.0, type=float)
-    parser.add_argument("--background_margin", default=0.75, type=float)
-    parser.add_argument("--motion_bin_ms", default=50.0, type=float)
-    parser.add_argument("--max_background_embeddings", default=4096, type=int)
-
-    # MBTC: local support disagreement, trajectory coverage, and route priors.
-    parser.add_argument("--support_weight", default=1.0, type=float)
-    parser.add_argument("--trajectory_weight", default=0.25, type=float)
-    parser.add_argument("--route_weight", default=0.05, type=float)
-    parser.add_argument("--motion_direction_weight", default=0.1, type=float)
-    parser.add_argument("--motion_speed_weight", default=0.1, type=float)
+    # Shared trajectory evaluation bins.
     parser.add_argument("--trajectory_bin_ms", default=50.0, type=float)
-    parser.add_argument("--min_trajectory_events", default=2, type=int)
+
+    # Risk ablations: same A1 backbone, no additional trainable heads.
+    parser.add_argument("--risk_mode", default="term", choices=["event", "balanced", "term"])
+    parser.add_argument("--risk_weight", default=0.1, type=float)
+    parser.add_argument("--risk_beta", default=1.0, type=float,
+                        help="nonnegative tilt; 0 uses the balanced bin mean")
+    parser.add_argument("--risk_bin_ms", default=50.0, type=float,
+                        help="training-only risk bins; does not change evaluation bins")
 
     # ── evaluation ──────────────────────────────────────────────────
     parser.add_argument("--eval", default=True, type=_boolean, nargs="?", const=True)
@@ -192,5 +160,10 @@ def parse(extra: list[tuple[str, dict[str, Any]]] | None = None) -> argparse.Nam
     if selected.experiment:
         parser.set_defaults(**EXPERIMENTS[selected.experiment])
     cfg = parser.parse_args()
+    if cfg.loss == "stc_risk":
+        for name in ("risk_weight", "risk_beta", "risk_bin_ms"):
+            value = getattr(cfg, name)
+            if not math.isfinite(value) or value < 0 or (name == "risk_bin_ms" and value == 0):
+                parser.error(f"invalid --{name}: must be finite and {'positive' if name == 'risk_bin_ms' else 'nonnegative'}")
     globals()["cfg"] = cfg
     return cfg
