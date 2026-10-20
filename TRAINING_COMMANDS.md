@@ -115,3 +115,7 @@ uv run python test.py --split val --experiment r3_term \
 若出现 Attention 反向 NaN，在同一 50 轮学习率计划下加 `--diagnose_numerics`，需要隔离融合 SDPA 后端时加 `--attention_backend math`。切换后端不能视为修复已获证实，且正式对照应统一后端。单轮 smoke 只验证可运行性，不适合复现依赖原学习率计划的异常。
 
 收集 config.json、metrics.jsonl、完整评估命令、GPU、耗时与显存。当前轨迹指标仅统计有标注事件的时间箱，不等于真实时间连续检测时长。测试集只在模型和阈值冻结后评估。
+
+## IoU runner 的 HAIS_OP 导入排查
+
+若旧版脚本在预检阶段报 `ModuleNotFoundError: HAIS_OP`，先同步最新版 `scripts/run_iou_ablation.py`，它已将项目根目录加入模块搜索路径；单纯chdir不足以做到这一点。可在服务器项目根目录运行 `uv run python -c 'import torch, HAIS_OP; print(HAIS_OP.__file__)'` 验证；若此命令也报告缺少HAIS_OP，再运行 `uv run python scripts/build_ext.py` 在服务器构建，不复制其他机器的编译扩展。更新后原实验命令不变。

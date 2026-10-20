@@ -10,6 +10,11 @@ import sys
 import tarfile
 import uuid
 
+# Executing ``python scripts/...`` adds scripts/, not the repository root, to
+# sys.path. build_ext.py places HAIS_OP.so in the root, as train.py expects.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -21,7 +26,7 @@ def main():
     options = parser.parse_args()
     if len(set(options.seeds)) != len(options.seeds):
         parser.error('duplicate seeds')
-    os.chdir(Path(__file__).resolve().parents[1])
+    os.chdir(PROJECT_ROOT)
     tag = datetime.now().strftime('%Y%m%d_%H%M%S') + '_' + uuid.uuid4().hex[:6]
     bundle = Path('runs/logs') / f'iou_ablation_{tag}'
     common = ['--data_dir', options.data_dir, '--gpu', options.gpu,
@@ -62,7 +67,15 @@ def main():
             raise RuntimeError(f'Command failed; see {log}. Previous results are preserved.')
 
     import torch
-    import HAIS_OP  # noqa: F401 -- check the server extension before training
+    try:
+        import HAIS_OP  # noqa: F401 -- check the server extension before training
+    except ModuleNotFoundError as error:
+        if error.name != 'HAIS_OP':
+            raise
+        raise RuntimeError(
+            f'HAIS_OP was not found in {PROJECT_ROOT}. '
+            'Build it in this server environment with: uv run python scripts/build_ext.py'
+        ) from error
     if not torch.cuda.is_available():
         raise RuntimeError('CUDA unavailable')
     device = torch.device(f'cuda:{options.gpu}')

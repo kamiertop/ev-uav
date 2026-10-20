@@ -177,6 +177,8 @@ R3 不优于 R2 时保留简单方案。初筛成立后再有限扫描 lambda∈
 
 本轮改动：utils/iou_loss.py、utils/args.py、train.py、utils/eval.py、test.py、tests/test_iou_loss.py、tests/test_experiment_config.py、scripts/run_iou_ablation.sh/.py、TRAINING_COMMANDS.md、本文件；保留既有未提交文档及用户结果。下一步用户同步全部改动和新增文件到服务器，在空闲GPU执行 `bash scripts/run_iou_ablation.sh --gpu 0 --data-dir ../ev-uav-data`，成功后回传自动生成的结果tar.gz，权重保留服务器。命令及可选分批运行见 TRAINING_COMMANDS.md 当前优先小节。
 
+2026-10-20 启动修复：用户服务器在 runner 预检 `import HAIS_OP` 报 ModuleNotFoundError。确认扩展构建脚本将 .so 放在项目根目录，而 `python scripts/run_iou_ablation.py` 默认只将 scripts 加入 sys.path，chdir不会修复导入路径。runner已显式加入PROJECT_ROOT，缺少扩展时提供构建命令；新增 tests/test_iou_runner_path.py 在外部cwd子进程回归验证。41项CPU测试通过，本地通过runner路径初始化后实际导入根目录HAIS_OP.so成功；仍未完成CUDA训练。用户只需同步更新 scripts/run_iou_ablation.py（新回归测试可一并同步），原命令重跑；若服务器根目录确实没有扩展，再执行 scripts/build_ext.py。本次未修改训练协议。
+
 ## 7. 未完成项
 
 P1–P4 主线已闭环：四组对照、阈值敏感性、auto→math 协议切换、12 组 math 三种子表、阈值冻结与测试集终评均完成（见 P1/P2/P4），测试集已封存。剩余研究方向：验证集分组诊断脚本（轨迹层为何不动、R2 为何劣于 R1）、r1_event 方差与校准问题、P3 路径监督（ML_METHOD_SURVEY.md 第 5 节）、真实时间指标、UOT、SSM、自动配置恢复。代码提交及远程同步状态以 Git 为准；未创建 PR。下一位模型从当前文件直接继续。
