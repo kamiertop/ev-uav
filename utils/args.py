@@ -27,6 +27,12 @@ EXPERIMENTS = {
     "a1_lovasz": dict(patch_attention="sequence", loss="stc_iou", iou_mode="lovasz"),
     "a1_jaccard": dict(patch_attention="sequence", loss="stc_iou", iou_mode="jaccard"),
     "r1_event": dict(patch_attention="sequence", loss="stc_risk", risk_mode="event"),
+    "r1_jaccard": dict(patch_attention="sequence", loss="stc_r1_precision", risk_mode="event",
+                       iou_mode="jaccard", iou_weight=0.1, hardneg_weight=0.0),
+    "r1_hardneg": dict(patch_attention="sequence", loss="stc_r1_precision", risk_mode="event",
+                       iou_mode="jaccard", iou_weight=0.0, hardneg_weight=0.03),
+    "r1_precision": dict(patch_attention="sequence", loss="stc_r1_precision", risk_mode="event",
+                         iou_mode="jaccard", iou_weight=0.1, hardneg_weight=0.03),
     "r2_balanced": dict(patch_attention="sequence", loss="stc_risk", risk_mode="balanced"),
     "r3_term": dict(patch_attention="sequence", loss="stc_risk", risk_mode="term"),
     "attention_fix": dict(patch_attention="corrected", loss="stc"),
@@ -101,7 +107,7 @@ def parse(extra: list[tuple[str, dict[str, Any]]] | None = None) -> argparse.Nam
     parser.add_argument("--scheduler", default="linear",
                         choices=["linear", "step", "none"])
     parser.add_argument(
-        "--loss", default="stc", choices=["stc", "stc_risk", "stc_iou"],
+        "--loss", default="stc", choices=["stc", "stc_risk", "stc_iou", "stc_r1_precision"],
         help="STC baseline, foreground risk, or event IoU surrogate",
     )
     parser.add_argument("--k", default=3, type=int,
@@ -128,6 +134,11 @@ def parse(extra: list[tuple[str, dict[str, Any]]] | None = None) -> argparse.Nam
     # Shared trajectory evaluation bins.
     parser.add_argument("--iou_mode", default="lovasz", choices=["lovasz", "jaccard"])
     parser.add_argument("--iou_weight", default=0.1, type=float)
+    parser.add_argument("--hardneg_weight", default=0.03, type=float)
+    parser.add_argument("--hardneg_ratio", default=3.0, type=float,
+                        help="hard background count per foreground event; training only")
+    parser.add_argument("--hardneg_min", default=256, type=int,
+                        help="minimum selected background events, capped by availability")
     parser.add_argument("--trajectory_bin_ms", default=50.0, type=float)
 
     # Risk ablations: same A1 backbone, no additional trainable heads.
@@ -164,9 +175,16 @@ def parse(extra: list[tuple[str, dict[str, Any]]] | None = None) -> argparse.Nam
     if selected.experiment:
         parser.set_defaults(**EXPERIMENTS[selected.experiment])
     cfg = parser.parse_args()
-    if cfg.loss == "stc_iou" and (not math.isfinite(cfg.iou_weight) or cfg.iou_weight < 0):
+    if cfg.loss in {"stc_iou", "stc_r1_precision"} and (not math.isfinite(cfg.iou_weight) or cfg.iou_weight < 0):
         parser.error("--iou_weight must be finite and nonnegative")
-    if cfg.loss == "stc_risk":
+    if cfg.loss == "stc_r1_precision":
+        if cfg.risk_mode != "event" or cfg.iou_mode != "jaccard":
+            parser.error("stc_r1_precision requires --risk_mode event --iou_mode jaccard")
+        if not math.isfinite(cfg.hardneg_weight) or cfg.hardneg_weight < 0:
+            parser.error("--hardneg_weight must be finite and nonnegative")
+        if not math.isfinite(cfg.hardneg_ratio) or cfg.hardneg_ratio <= 0 or cfg.hardneg_min < 1:
+            parser.error("--hardneg_ratio must be finite and positive; --hardneg_min must be positive")
+    if cfg.loss in {"stc_risk", "stc_r1_precision"}:
         for name in ("risk_weight", "risk_beta", "risk_bin_ms"):
             value = getattr(cfg, name)
             if not math.isfinite(value) or value < 0 or (name == "risk_bin_ms" and value == 0):

@@ -22,6 +22,7 @@ from utils.training_checks import check_loss, check_gradients, check_tensors
 from utils.stcloss import STCLoss
 from utils.trajectory_risk import STCTrajectoryRiskLoss
 from utils.iou_loss import STCIoULoss
+from utils.r1_precision import STCR1PrecisionLoss
 
 
 def build_optimizer(net, cfg):
@@ -93,6 +94,10 @@ def main():
         ).to(device)
     elif args.cfg.loss == "stc_iou":
         criterion = STCIoULoss(
+            STCLoss(k=args.cfg.k, t=args.cfg.t, cfg=args.cfg), args.cfg,
+        ).to(device)
+    elif args.cfg.loss == "stc_r1_precision":
+        criterion = STCR1PrecisionLoss(
             STCLoss(k=args.cfg.k, t=args.cfg.t, cfg=args.cfg), args.cfg,
         ).to(device)
     optimizer = build_optimizer(net, args.cfg)

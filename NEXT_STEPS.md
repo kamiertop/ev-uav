@@ -8,7 +8,7 @@
 
 基于 EV-SpSegNet / EV-UAV，借鉴 ICLR、ICML 方法改善分割与轨迹完整性。先验证困难轨迹风险加权，随后根据错误分析决定是否研究可微路径监督。
 
-当前保留八个预设（2026-10-20 新增两个 IoU 对照）：
+当前保留十一个预设（2026-10-20 新增两个 IoU 对照和三个 R1 改进对照）：
 
 | 预设 | 用途 |
 |---|---|
@@ -18,6 +18,9 @@
 | a1_lovasz | A1 + binary Lovász hinge（IoU 对照） |
 | a1_jaccard | A1 + soft Jaccard（IoU 对照） |
 | r1_event | A1 + 前景事件均值 BCE 辅助监督 |
+| r1_jaccard | R1 + soft Jaccard |
+| r1_hardneg | R1 + 困难背景 BCE |
+| r1_precision | R1 + soft Jaccard + 困难背景 BCE |
 | r2_balanced | A1 + 实例/时间箱均衡 BCE |
 | r3_term | A1 + 实例/时间箱 TERM |
 
@@ -178,6 +181,36 @@ R3 不优于 R2 时保留简单方案。初筛成立后再有限扫描 lambda∈
 本轮改动：utils/iou_loss.py、utils/args.py、train.py、utils/eval.py、test.py、tests/test_iou_loss.py、tests/test_experiment_config.py、scripts/run_iou_ablation.sh/.py、TRAINING_COMMANDS.md、本文件；保留既有未提交文档及用户结果。下一步用户同步全部改动和新增文件到服务器，在空闲GPU执行 `bash scripts/run_iou_ablation.sh --gpu 0 --data-dir ../ev-uav-data`，成功后回传自动生成的结果tar.gz，权重保留服务器。命令及可选分批运行见 TRAINING_COMMANDS.md 当前优先小节。
 
 2026-10-20 启动修复：用户服务器在 runner 预检 `import HAIS_OP` 报 ModuleNotFoundError。确认扩展构建脚本将 .so 放在项目根目录，而 `python scripts/run_iou_ablation.py` 默认只将 scripts 加入 sys.path，chdir不会修复导入路径。runner已显式加入PROJECT_ROOT，缺少扩展时提供构建命令；新增 tests/test_iou_runner_path.py 在外部cwd子进程回归验证。41项CPU测试通过，本地通过runner路径初始化后实际导入根目录HAIS_OP.so成功；仍未完成CUDA训练。用户只需同步更新 scripts/run_iou_ablation.py（新回归测试可一并同步），原命令重跑；若服务器根目录确实没有扩展，再执行 scripts/build_ext.py。本次未修改训练协议。
+
+2026-10-20 新近竞争工作核对：事件反无人机不是仅原团队两篇。不同作者团队PACT（作者标注ECCV2026录用，EV-UAV报告IoU75.90）及PointEvent（2026-09预印本，报告75.56）是直接竞争；ASUMOT/ES-UAV、M²E-UAV、SkyEV及意大利NeRDD/EV-Flying/FRED是相关赛道。来源/团队/录用边界/训练采样差异详见 ML_METHOD_SURVEY.md 第11节。此前R1=65.97接近SpTopoNet不等于接近最新最高报告值；论文选题不能只以超过55.18/66.62为新颖性依据。当前IoU损失对照继续作为诊断，尚无新训练结果；下一步需审查PACT/PointEvent代码及评估协议再规划论文主贡献。本轮只更新ML_METHOD_SURVEY.md与本文件。
+
+## 2026-10-20 IoU ablation日志已回收分析
+
+来源 `iou_ablation_20261020_163642_2d5b7c.tar.gz`，解压在 `runs/imported_iou_20261020_163642_2d5b7c/`（保留旧runs）。9组50轮math训练和45次val均成功，41项服务器CPU测试通过，无training_error/NaN/Inf/OOM记录、未评test。@.9：A1 s13/37/73 IoU=.3864/.5304/.6973，均值.5380；Lovász=.5382/.6947/.5447，均值.5925；Jaccard=.7225/.5924/.7091，均值.6746，配对+33.61/+6.19/+1.18pp，平均+13.66pp。Jaccard precision .9020 vs A1 .6927，seg_acc .7284 vs .7221，Pd .7593 vs .7685，Fa3.51e-06 vs3.57e-06；IoU增益主要来自val_015的严重误检减少。Jaccard在17/18/14条序列提高IoU，但等权序列macro增益约1.76pp，不把全局13.66pp泛化为各场景普遍改善。
+
+主候选保留A1+Jaccard λ=.1、统一val阈值.9；Lovász s37有效（.6947）但本轮整体次于Jaccard。当前A1与旧math基线存在漂移，config差异仅run名及未启用IoU flags，原因未定，后续使用本批A1配对，不直接混历史R1。保持用户对R1的兴趣，不把种子波动作为否决条件；若新实验优先验证val_015错误及同协议R1/R1+Jaccard，不自动开启无界调参或test。
+
+完整结果/阈值/配置审计/逐序列分析见 EXPERIMENT_RESULTS.md 第10节；45行CSV在解压日志目录analysis_metrics.csv。每组约31–32分钟，Jaccard实际开销接近A1，PyTorch峰值allocated约18.1GiB（非整卡占用）。本轮只改EXPERIMENT_RESULTS.md、本文件，并新增解压结果/CSV（runs忽略），未修改代码或运行新训练。下一步用户阅读结果后决定是否做R1+Jaccard或PACT；测试集仍保持封存。
+
+2026-10-20 用户决定本轮不先补R1、直接测试：新增 `scripts/test_iou_ablation.py`，精确绑定batch=20261020_163642_2d5b7c，A1@.85与Jaccard@.9（各自val统一阈值峰值）×13/37/73，共6次test。启动前检查所有config、完成记录和checkpoint，保存冻结计划/训练config/完整测试JSON与日志并打包。已用本地解压配置dry-run验证六项计划及编译检查，尚未在本地运行测试；服务器命令见TRAINING_COMMANDS.md末尾。此为用户授权的后续迭代终评，不将测试结果用于调阈值；需如实记载历史test使用。本轮已改/新增scripts/test_iou_ablation.py、TRAINING_COMMANDS.md、本文件，保留其他未提交修改。
+
+## 2026-10-20 22:15 IoU后续终评已回收：修正验证结论
+
+包 `iou_test_20261020_221519_00db35.tar.gz` 解压到 `runs/imported_iou_test_20261020_221519_00db35/`，冻结A1@.85与Jaccard@.9 ×13/37/73，6次test结果/训练config/冻结计划齐全、全局与逐序列计数一致。本批A1 IoU=.5564/.6289/.6420，mean=.6091±.0461；Jaccard=.6661/.6273/.3944，mean=.5626±.1469，配对+10.97/−.16/−24.75pp、均值−4.65pp。val的+13.66pp没有整体转移到test，撤回“Jaccard已稳定提高总体测试精度”的推断；不因波动否决R1/Jaccard，也不隐去失败seed。
+
+关键失败：Jaccard s73 test_008 FP388→42996，约占该run全部FP的98.3%，序列IoU .6177→.0350；Fa仍2.71e-06，不能用低连通域Fa证明事件误检少。s13则主要压制test_022/023背景，获得test66.61%；s37近乎持平。可视化前不猜测具体场景或标注问题。测试阈值已冻结，不为救结果继续扫test或选epoch。若继续改进，回val做背景竞争/错误诊断；已查看test形成的后续假设需披露、争取独立数据验证。用户尚未决定接下来转PACT或继续本路线。
+
+完整表和诊断见 EXPERIMENT_RESULTS.md 第11节；6行CSV在解压日志目录analysis_metrics.csv。当前“Jaccard为val主候选”的旧记录不再等价于test赢家，本批test平均A1更好。此次仅更新EXPERIMENT_RESULTS.md、本文件及忽略目录的解压/CSV，未训练或新增test。
+
+## 2026-10-20 R1 改进已实现，待用户服务器执行
+
+用户明确要求继续改善R1，不以种子波动否决，优先保留前景召回同时提高IoU。本轮新增utils/r1_precision.py，组合原STCTrajectoryRiskLoss(event) +可选soft Jaccard +可选困难背景BCE；原R1/STC不变、无新模型参数。三个预设r1_jaccard/r1_hardneg/r1_precision分别做2×2消融，对照原r1_event；risk=.1、iou=.1、hardneg=.03，按样本选top-k GT背景，k=min(Nbg,max(256,ceil(3Nfg)))，无前景/无背景安全，分支0跳过、双0精确恢复R1。不是已证实新颖方法或IoU收益；可能以召回换precision，需实测。
+
+已改/新增utils/r1_precision.py、utils/args.py、train.py、tests/test_r1_precision.py、tests/test_experiment_config.py、scripts/run_iou_ablation.py、scripts/run_r1_precision.sh、TRAINING_COMMANDS.md、ML_METHOD_SURVEY.md、本文件；保留用户暂存及未提交结果文档。runner支持新suite，旧IoU默认计划不变，eval准确恢复实际各项权重；新增源码快照/hash与train/val文件清单、valhash，精确绑定本次run并打包、失败即停。本地48项CPU测试通过（topk选择/样本隔离/梯度方向/gradcheck/FP16极端/空组/原R1精确退化/映射/参数校验）；模拟执行器验证3smoke+4正式+24val和不含权重的结果包，CLI/编译/shell检查通过。本地PyTorch2.13+cu126 CUDA仍不可用，未执行新方案CUDA训练。
+
+下一步同步全部改动和新文件到服务器运行 `bash scripts/run_r1_precision.sh --gpu 0 --data-dir ../ev-uav-data`；默认seed37、3个新组1轮smoke后四组50轮math，val扫.8/.85/.9/.95/.97/.98，预计2–2.5小时。可选--seeds37/13/73补验证，不自动追加test。回传runs/logs/r1_precision_*.tar.gz，保留服务器权重。具体指标、实验矩阵、预算和停止条件见TRAINING_COMMANDS.md末尾，不新增重复交接文档。
+
+2026-10-20 用户授权提交并推送：本轮提交范围为R1改进源码/测试/脚本、IoU终评脚本及最新实验与调研记录；48项CPU测试已通过。实验结果tar.gz留在本地，不纳入Git；新方案仍待服务器CUDA验证。提交及远程同步最终状态以Git为准。
 
 ## 7. 未完成项
 

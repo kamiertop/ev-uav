@@ -294,3 +294,30 @@ Group DRO 更适合已有可靠分组且样本充足时使用。先按训练集�
 可形成研究问题：是否能在事件级 IoU 对齐下减少高置信背景误检，同时保留稀疏前景召回？单纯加 Lovász/soft Jaccard 是成熟方法迁移/基线，不能宣称独立新颖贡献。先有稳健增益，再根据分组错误证据设计事件特定的时空竞争机制。
 
 2026-10-20 实现更新：第10节最小Lovász/soft Jaccard对照现已接入，40项CPU测试通过。仅CPU证据，待服务器执行；实现/运行入口见 NEXT_STEPS.md、TRAINING_COMMANDS.md。soft Jaccard在全负样本上显式回退背景BCE，不能将这一分支称纯IoU目标。
+
+## 11. 2026-10-20：事件相机反无人机赛道与直接竞争工作
+
+用户目标为发表论文；本轮检索不再只查通用损失。结论修正：EV-UAV事件级分割不是只有原团队两篇，至少已有作者名单不同的PACT和PointEvent直接跟进。此前“R1 s37=65.97%接近最好水平”只能指接近SpTopoNet=66.62%，不代表接近当前检索到的最高报告值。下列数值是作者报告，未本地复现；不能把不同训练/采样协议的论文数字当作受控配对结果。
+
+| 工作 | 核对状态与团队 | 与本项目关系 / 来源 |
+|---|---|---|
+| PACT / Following the Flow: Advection-Consistent Modeling for Event-based Small Object Detection | 2026-06预印本；arXiv Comments及作者仓库标注Accepted at ECCV2026，会议官方目录本轮未成功独立核对。Wen Guo/Fulong Cai（山东工商学院）、Wuzhou Quan（南航），与原两篇作者不同 | EV-UAV直接竞争；速度场特征输运/平流一致性。Table1报告IoU75.90、ACC80.05、Pd91.84、Fa0.76×10^-4。https://arxiv.org/html/2606.22378v1 ，代码 https://github.com/fulongcai/PACT |
+| PointEvent: Rethinking Event-based Tiny Object Detection via Serialized Motion Evidence Accumulation | 2026-09-17 arXiv，未核实正式录用；Zongze Wu/Baofeng Jia/Weiqi Yan/Jingyuan Zhang/Yu Zang/Xiaoyu Chen/Jing Han，南京理工/厦门大学 | EV-UAV及ES-UAV事件级任务；互补时空/时间序列扫描、状态空间证据累积、高分辨率分支。Table1报告IoU75.56、ACC81.61、Pd91.75、Fa0.12×10^-4。https://arxiv.org/html/2609.20066v1 ，代码 https://github.com/wzz-z/PointEvent （README目前为最小测试推理包，不视为完整训练代码已可复现） |
+| ASUMOT: Motion-Consistency-Based Asynchronous UAV Detection and Tracking with Event Cameras | 2026-07 arXiv，未核实正式录用；与PointEvent有多位共同作者，应算相近合作网络，不当独立第三团队 | 原始事件异步检测/跟踪，运动一致性blob聚类；引入高清事件级ES-UAV。https://arxiv.org/abs/2607.11303 |
+| M²E-UAV | 2026-05 arXiv，未核实正式录用；Weiqi Yan等，与PointEvent部分作者重叠 | 机载相机和目标同时运动，事件+IMU；前景标签来自传播bbox，标注口径不同。https://arxiv.org/abs/2605.10496 |
+| SkyEV | 2026-07 arXiv，未核实正式录用；Jakub Mandula/Sebastian Heusinger/Julian Moosmann/Christian Vogt/Michele Magno | RGB+事件无人机检测跟踪，考虑相机运动及镜头/视场与距离。https://arxiv.org/abs/2607.18747 |
+| Neuromorphic Drone Detection / NeRDD | ECCV2024 Workshops（非主会），Magrini/Becattini/Pala等 | 意大利团队RGB事件融合无人机检测，早于EV-UAV，是相邻任务。https://arxiv.org/abs/2409.16099 |
+| EV-Flying | CVPR2025 Workshops（非主会），Magrini/Becattini/Colombo/Pala | 鸟/昆虫/无人机识别，适合研究语义干扰，不是EV-UAV同一分割指标。https://openaccess.thecvf.com/content/CVPR2025W/EventVision/html/Magrini_EV-Flying_an_Event-based_Dataset_for_In-The-Wild_Recognition_of_Flying_Objects_CVPRW_2025_paper.html |
+| FRED | 核对2025 arXiv版本，不擅自归为主会 | Florence RGB-Event Drone Dataset，检测/跟踪/轨迹预测。https://arxiv.org/abs/2506.05163 |
+
+入口综述：Drone Detection with Event Cameras，ICCV2025 NeVi Workshop（非主会），Florence/Siena团队。https://openaccess.thecvf.com/content/ICCV2025W/NeVi/papers/Magrini_Drone_Detection_with_Event_Cameras_ICCVW_2025_paper.pdf 。说明广义事件无人机检测早已有多个团队，真正较新的切口是EV-UAV式逐事件微小无人机分割。
+
+协议差异必须先核对：PACT补充表给出Adam1e-3/StepLR/batch4/50轮；PointEvent训练EV-UAV事件上限30K、体素代表事件采样再球形裁剪，推理映射回原事件。与本项目Adam1e-2→1e-3/batch1/700K随机事件采样不同。不据论文表立即声称其与本地完全可比；仍应将两者纳入相关工作及复现优先队列。
+
+额外线索（本轮未完成主来源全文核验，不作为确定事实主表）：Mathematics 2026的Adaptive Temporal Reallocation and Trajectory-Aware Modulation for Event-Level Segmentation of Small-Scale UAVs，出版社页面抓取失败；索引指向 https://www.mdpi.com/2227-7390/14/16/2981 ，后续补核验作者/数值/代码。
+
+投稿判断：当前Lovász/Jaccard实验可继续作为低成本目标函数诊断，但仅加成熟损失、在EV-UAV单数据集超过55.18或接近66.62，不足以支撑顶会新颖性及领先性能主张。后续候选问题可以是因果短延迟检测、复杂背景/鸟虫干扰下的前景竞争、跨数据集泛化与密度鲁棒性；均需以近邻检索及受控验证确证空白，不能称无人做过。尤其“运动输运一致性”已有PACT，“序列化SSM累积”已有PointEvent，不能直接作为我们的新核心贡献。先完成当前对照、审查两篇开源评估与采样协议，再决定结构路线；不恢复已删除旧运动模块。
+
+## 12. R1 精度改进对照已实现（2026-10-20）
+
+依据前景辅助监督未增加负类约束的代码事实，以及val中误检集中的证据，先检验普通损失组合而非恢复旧运动路线：原R1、R1+soft Jaccard、R1+top-k背景BCE、两者组合，所有项独立开关。此为常规IoU对齐/困难负例挖掘的工程控制实验，不构成新颖性主张；test失败样本已被查看，后续研究受其启发需披露，不针对test_008手工设计标签/筛样本。开发默认seed37、math固定50轮及val扫描；主假设是FP减少同时尽量保留R1的前景召回，可能被实验否定。基线/消融/预算/指标完整计划在TRAINING_COMMANDS.md末尾。未使用PACT代码或恢复已删除模块，未运行CUDA，48项CPU测试通过仅证明数值/接入正确。

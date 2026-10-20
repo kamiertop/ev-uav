@@ -119,3 +119,52 @@ uv run python test.py --split val --experiment r3_term \
 ## IoU runner 的 HAIS_OP 导入排查
 
 若旧版脚本在预检阶段报 `ModuleNotFoundError: HAIS_OP`，先同步最新版 `scripts/run_iou_ablation.py`，它已将项目根目录加入模块搜索路径；单纯chdir不足以做到这一点。可在服务器项目根目录运行 `uv run python -c 'import torch, HAIS_OP; print(HAIS_OP.__file__)'` 验证；若此命令也报告缺少HAIS_OP，再运行 `uv run python scripts/build_ext.py` 在服务器构建，不复制其他机器的编译扩展。更新后原实验命令不变。
+
+## 本轮 IoU 候选测试（用户已决定不先补 R1）
+
+同步新增 `scripts/test_iou_ablation.py` 到训练服务器，在项目根目录运行：
+
+```bash
+uv run python scripts/test_iou_ablation.py --batch 20261020_163642_2d5b7c --gpu 0 --data-dir ../ev-uav-data
+```
+
+只评本轮A1/Jaccard各seed13/37/73，合计6次test、不训练。预先按val跨seed均值选择并冻结A1@0.85、Jaccard@0.9，不能在test扫阈值。脚本精确绑定批次，启动前核验六个配置、50轮完成记录及全部best_iou权重，缺少任何一项即报错；不使用旧final_test.sh的历史目录匹配。评估flags从各训练config恢复必要模型/指标参数，保存冻结计划、训练config、6份test JSON与日志，最后生成 `runs/logs/iou_test_*.tar.gz` 回传。
+
+本地仅用解压config/metrics dry-run验证6项绑定与参数生成、编译检查通过，无本地权重/CUDA，未执行test。已有测试集曾使用，本次属于用户授权的后续迭代终评，应在实验记录中透明披露。
+
+## R1 改进：IoU 对齐与困难背景对照（2026-10-20）
+
+保留原R1（risk_weight=.1），新增三个预设，无新模型参数：
+
+| 预设 | 训练目标 |
+|---|---|
+| r1_event | STC + .1×原前景事件BCE |
+| r1_jaccard | R1 + .1×soft Jaccard |
+| r1_hardneg | R1 + .03×困难背景BCE |
+| r1_precision | R1 + .1×soft Jaccard + .03×困难背景BCE |
+
+困难背景在每个样本内从GT背景事件选择最高logit的k个，k=min(背景数,max(256,ceil(3×全部前景事件数)))；选中事件用稳定softplus(logit)均值监督，不能由模型预测或测试场景身份定义GT负例。无背景样本该项为可微零但仍计入样本平均；无前景样本选最难的最多256个背景。STC对全部事件的监督不变，原R1仍仅label>.5且instance_id>0的前景。背景选择与辅助监督仅训练使用，不增加推理步骤。hardneg_weight=0/iou_weight=0分别跳过分支；两项均0时精确恢复R1。额外项权重是工程初始值，不是已验证最优值；不恢复旧focal/embedding/运动模块，不宣称该常规组合为独立新颖算法。
+
+先同步本次全部已改源码和新增文件到服务器（尤其 utils/r1_precision.py、utils/args.py、train.py、scripts/run_iou_ablation.py、scripts/run_r1_precision.sh、tests/test_r1_precision.py、tests/test_experiment_config.py）。项目根目录执行：
+
+```bash
+bash scripts/run_r1_precision.sh --gpu 0 --data-dir ../ev-uav-data
+```
+
+默认只seed37：48项CPU测试→3个新增组各1轮CUDA smoke→上述4组各50轮math正式训练→每组best_iou权重在val评估 .8/.85/.9/.95/.97/.98（24次评估）。50轮训练依旧batch1/700000事件/Adam.01→.001线性/val@.9选best，禁早停与自动test；R1基线重跑以避免混用历史漂移结果。原run_iou_ablation.sh默认行为仍为之前3方法×3种子，不要混淆。
+
+按当前每组31–32分钟估计本轮约2–2.5小时，硬负例实际GPU开销待验证。GPU可用显存预检22GiB、HAIS_OP路径初始化沿用已修复入口、任一步失败立即停止。控制台打印训练日志路径，进度在相应日志中查看。
+
+只预览（不启动GPU）：
+
+```bash
+bash scripts/run_r1_precision.sh --dry-run
+```
+
+若要三种子一起执行，可显式 `--seeds 37 13 73`（12组，约6.5–7.5小时起）；默认先单seed不以波动否决候选，也不能声称单seed已证明泛化。`--weight 0.03`仅改变启用Jaccard分支的权重、原R1仍.1/困难背景仍.03；本轮不默认扫描。
+
+结束后回传 `runs/logs/r1_precision_时间_标识.tar.gz`，服务器保留权重。本轮额外打包训练时源码快照/sha256、train/val文件名及大小和val文件SHA256，用于排查历史基线漂移；不读取test数据。训练config/metrics、各项损失、计数、每轮耗时和显存、val逐序列JSON/命令清单均入包，模型权重不入包。
+
+判定预先看同阈值val@.9 IoU/precision/seg_acc/Pd/Fa以及全局与逐序列计数；另看跨seed统一阈值扫描，不只挑最高单次，不以单seed波动拒绝。检验R1_jaccard相对R1的收益、hardneg单独作用、组合是否比两单项更好。IoU仅靠召回大跌换取时不称四指标全面改进。只用val选方案，不因已查看的test_008对test做针对调参；后续投稿需披露test历史使用及最好独立数据补证。
+
+本地48项CPU测试通过，runner模拟编排验证通过（3smoke/4正式/24val、分支关闭权重恢复及打包），CLI/编译/shell检查通过。本地CUDA不可用，**未运行新方案CUDA训练，不承诺IoU收益**。
