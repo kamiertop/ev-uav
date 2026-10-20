@@ -24,6 +24,8 @@ from typing import Any
 EXPERIMENTS = {
     "a0": dict(patch_attention="legacy", loss="stc"),
     "a1": dict(patch_attention="sequence", loss="stc"),
+    "a1_lovasz": dict(patch_attention="sequence", loss="stc_iou", iou_mode="lovasz"),
+    "a1_jaccard": dict(patch_attention="sequence", loss="stc_iou", iou_mode="jaccard"),
     "r1_event": dict(patch_attention="sequence", loss="stc_risk", risk_mode="event"),
     "r2_balanced": dict(patch_attention="sequence", loss="stc_risk", risk_mode="balanced"),
     "r3_term": dict(patch_attention="sequence", loss="stc_risk", risk_mode="term"),
@@ -99,8 +101,8 @@ def parse(extra: list[tuple[str, dict[str, Any]]] | None = None) -> argparse.Nam
     parser.add_argument("--scheduler", default="linear",
                         choices=["linear", "step", "none"])
     parser.add_argument(
-        "--loss", default="stc", choices=["stc", "stc_risk"],
-        help="STC baseline or STC plus foreground trajectory risk",
+        "--loss", default="stc", choices=["stc", "stc_risk", "stc_iou"],
+        help="STC baseline, foreground risk, or event IoU surrogate",
     )
     parser.add_argument("--k", default=3, type=int,
                         help="spatial correlation kernel size")
@@ -124,6 +126,8 @@ def parse(extra: list[tuple[str, dict[str, Any]]] | None = None) -> argparse.Nam
     )
 
     # Shared trajectory evaluation bins.
+    parser.add_argument("--iou_mode", default="lovasz", choices=["lovasz", "jaccard"])
+    parser.add_argument("--iou_weight", default=0.1, type=float)
     parser.add_argument("--trajectory_bin_ms", default=50.0, type=float)
 
     # Risk ablations: same A1 backbone, no additional trainable heads.
@@ -160,6 +164,8 @@ def parse(extra: list[tuple[str, dict[str, Any]]] | None = None) -> argparse.Nam
     if selected.experiment:
         parser.set_defaults(**EXPERIMENTS[selected.experiment])
     cfg = parser.parse_args()
+    if cfg.loss == "stc_iou" and (not math.isfinite(cfg.iou_weight) or cfg.iou_weight < 0):
+        parser.error("--iou_weight must be finite and nonnegative")
     if cfg.loss == "stc_risk":
         for name in ("risk_weight", "risk_beta", "risk_bin_ms"):
             value = getattr(cfg, name)

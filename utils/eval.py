@@ -10,7 +10,8 @@ import tqdm
 from utils import args as _args
 
 
-def run_test(model_path: str, cfg, *, device: str = "cuda:0", split: str = "test") -> dict:
+def run_test(model_path: str, cfg, *, device: str = "cuda:0", split: str = "test",
+             include_per_sequence: bool = False) -> dict:
     """Load a checkpoint and evaluate on a held-out split (test by default).
 
     Returns a dict with keys ``iou``, ``seg_acc``, and optionally
@@ -18,6 +19,8 @@ def run_test(model_path: str, cfg, *, device: str = "cuda:0", split: str = "test
     """
     if split not in {"val", "test"}:
         raise ValueError("evaluation split must be val or test")
+    if include_per_sequence and cfg.batch_size != 1:
+        raise ValueError("per-sequence JSON requires --batch_size 1")
     from dataset.ev_uav import EvUAV
     from model.evspsegnet import evspsegnet
 
@@ -82,6 +85,13 @@ def run_test(model_path: str, cfg, *, device: str = "cuda:0", split: str = "test
         results["seg_acc"] = evaluator.evaluate_semantic_segmantation_accuracy(
             thresh=cfg.prediction_thresh, device=device,
         )
+        results.update(evaluator.evaluate_event_counts(thresh=cfg.prediction_thresh))
+        if include_per_sequence:
+            results["per_sequence"] = [
+                {"sequence": dataset.file_list[int(key)],
+                 **evaluator.event_counts(record, cfg.prediction_thresh)}
+                for key, record in evaluator.matches.items()
+            ]
         results.update(evaluator.evaluate_trajectory_metrics(
             thresh=cfg.prediction_thresh,
             bin_ms=cfg.trajectory_bin_ms,
@@ -93,6 +103,30 @@ def run_test(model_path: str, cfg, *, device: str = "cuda:0", split: str = "test
 
 
 class evalute():
+    @staticmethod
+    def event_counts(record, thresh):
+        prediction = torch.as_tensor(record["seg_pred"]).detach().reshape(-1).cpu() >= thresh
+        target = torch.as_tensor(record["seg_gt"]).detach().reshape(-1).cpu() > 0.5
+        tp = int((prediction & target).sum())
+        fp = int((prediction & ~target).sum())
+        fn = int((~prediction & target).sum())
+        return evalute.count_metrics(tp, fp, fn, target.numel())
+
+    @staticmethod
+    def count_metrics(tp, fp, fn, events):
+        return {
+            "tp": tp, "fp": fp, "fn": fn, "events": events,
+            "precision": tp / max(tp + fp, 1),
+            "event_iou": tp / max(tp + fp + fn, 1),
+            "foreground_fraction": (tp + fn) / max(events, 1),
+            "fp_per_gt": fp / (tp + fn) if tp + fn else None,
+        }
+
+    def evaluate_event_counts(self, thresh=0.9):
+        counts = [self.event_counts(record, thresh) for record in self.matches.values()]
+        return self.count_metrics(*(sum(row[key] for row in counts)
+                                    for key in ("tp", "fp", "fn", "events")))
+
     def __init__(self, cfg):
         self.matches = {}
         self.data = pd.DataFrame()

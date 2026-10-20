@@ -8,6 +8,7 @@ Usage::
 """
 
 import torch
+import time
 import torch.optim as optim
 import tqdm
 
@@ -20,6 +21,7 @@ from utils.seed import set_seed
 from utils.training_checks import check_loss, check_gradients, check_tensors
 from utils.stcloss import STCLoss
 from utils.trajectory_risk import STCTrajectoryRiskLoss
+from utils.iou_loss import STCIoULoss
 
 
 def build_optimizer(net, cfg):
@@ -89,6 +91,10 @@ def main():
         criterion = STCTrajectoryRiskLoss(
             STCLoss(k=args.cfg.k, t=args.cfg.t, cfg=args.cfg), args.cfg,
         ).to(device)
+    elif args.cfg.loss == "stc_iou":
+        criterion = STCIoULoss(
+            STCLoss(k=args.cfg.k, t=args.cfg.t, cfg=args.cfg), args.cfg,
+        ).to(device)
     optimizer = build_optimizer(net, args.cfg)
     scheduler = build_scheduler(optimizer, args.cfg)
 
@@ -101,6 +107,9 @@ def main():
     validation_rounds = 0
 
     for epoch in range(args.cfg.epochs):
+        torch.cuda.synchronize(device)
+        epoch_started = time.perf_counter()
+        torch.cuda.reset_peak_memory_stats(device)
         net.train()
         epoch_loss = 0.0
         pbar = tqdm.tqdm(
@@ -214,9 +223,14 @@ def main():
                 bin_ms=args.cfg.trajectory_bin_ms,
                 correct_thresh=args.cfg.trajectory_correct_thresh,
             )
+            event_metrics = evaluator.evaluate_event_counts(thresh=args.cfg.prediction_thresh)
+            torch.cuda.synchronize(device)
             run.log_metric(
                 epoch, None, epoch_loss=epoch_loss, iou=iou.item(),
-                seg_acc=seg_acc.item(), **trajectory_metrics,
+                seg_acc=seg_acc.item(), **trajectory_metrics, **event_metrics,
+                epoch_seconds=time.perf_counter() - epoch_started,
+                peak_cuda_allocated_bytes=torch.cuda.max_memory_allocated(device),
+                peak_cuda_reserved_bytes=torch.cuda.max_memory_reserved(device),
             )
 
             validation_rounds += 1

@@ -1,6 +1,8 @@
 # 从 ICLR / ICML 方法出发的 EV-UAV 改进调研
 
-调研日期：2026-10-16。最新状态：已实现第一阶段 event / balanced / TERM 风险对照并通过 CPU 测试（最新数量见 NEXT_STEPS.md），尚无新 CUDA 训练结果。路径、UOT 与结构方案仍是待验证设计。接手入口见 [NEXT_STEPS.md](NEXT_STEPS.md)。
+最新调研：2026-10-20。**当前 IoU 优先路线见第 10 节；第 1–9 节为历史方案记录，其“首选/尚无 CUDA 结果”等状态已过时，执行状态以 NEXT_STEPS.md 为准。**
+
+原调研日期：2026-10-16。最新状态：已实现第一阶段 event / balanced / TERM 风险对照并通过 CPU 测试（最新数量见 NEXT_STEPS.md），尚无新 CUDA 训练结果。路径、UOT 与结构方案仍是待验证设计。接手入口见 [NEXT_STEPS.md](NEXT_STEPS.md)。
 
 ## 1. 推荐结论
 
@@ -250,3 +252,45 @@ Group DRO 更适合已有可靠分组且样本充足时使用。先按训练集�
 已完成的风险损失 CPU 验证包括 beta→0 与均值一致、箱内复制事件不改变该箱均值、样本与实例隔离。路径方案未来需验证小图枚举与 DP 的值/梯度一致、无 GT 路径处理、竞争背景存在、缺失时间箱语义及多目标交叉。两条路线均需 CUDA 验证后才进入完整训练。
 
 第一阶段风险损失现已实现；第 9 节中的 logits、trajectory_risk 与训练参数接入已经完成，其余仍为后续计划。具体已实现语义、测试证据和未完成项见 NEXT_STEPS.md；没有新方法精度收益的证据。
+
+## 10. 2026-10-20：面向 IoU 的新优先级
+
+用户当前目标改为提高 IoU，保留 Pd/Fa 作为约束；不再优先轨迹连续性。auto 的 R1 优势未在 math 三种子复现，λ=0.03 未带来稳定优势。暂停把 TERM/Path/UOT 作为首选，不重新实现 TERM，不恢复已删除的 focal/tversky/embedding 等旧模块。下述均为候选，尚未接入训练，不能承诺收益。
+
+### 10.1 当前可检验的瓶颈
+
+当前 R1 = STC + 仅 eligible 前景的 softplus(-logit)，没有新增背景惩罚；这解释了为何可能偏向召回，但不能据此排除主干/采样问题。Fa 计算错误前景的二维连通域数，IoU 则逐事件累计；一个很大的错误前景区域只可能增加一个连通域，因此低 Fa 不排除大量 FP。
+
+对已有 val（math）用 r=seg_acc=TP/GT、J=IoU，可推导 FP/GT=r/J−1，precision=r/(r+FP/GT)。从日志四位小数重建，数值近似：
+
+| seed | A1@0.8 FP/GT | R1 λ=.1@.95 FP/GT | A1 precision | R1 precision |
+|---|---|---|---|---|
+| 13 | .8156 | 1.0038 | .4715 | .4394 |
+| 37 | .5952 | .7776 | .5472 | .4922 |
+| 73 | .2395 | .8588 | .7571 | .4548 |
+
+这支持优先解决前景与背景判别及目标函数失配，而非只提高正样本权重。此表来自验证集，未追加 test；它不等同于按事件原始计数重算，也不证明误检的具体时空位置。
+
+### 10.2 本轮核对的主来源与适配取舍
+
+1. **Lovász-Softmax / binary Lovász hinge，CVPR 2018**：https://openaccess.thecvf.com/content_cvpr_2018/html/Berman_The_LovaSz-Softmax_Loss_CVPR_2018_paper.html 。直接构造 Jaccard 的可优化替代目标，最贴近当前 IoU 目标。二分类优先核对官方 binary hinge 实现，使用原始 logits；训练事件通过 p2v_map 还原后计算，不能直接用体素平均替代事件指标。候选 L=STC+λ L_Lovasz，暂不叠 R1；权重是待验证设计。排序为 O(N log N)，70万事件须实际测峰值和耗时；无前景样本仍须有背景监督。per-sequence 优化不等于当前全数据集累计 IoU，必须明确此聚合差异。
+2. **Jaccard Metric Losses: Optimizing the Jaccard Index with Soft Labels，NeurIPS 2023**：https://proceedings.neurips.cc/paper_files/paper/2023/hash/ee208bfc04b1bf6125a6a34baa1c28d3-Abstract-Conference.html 。论文指出 hard label 时与常规 soft Jaccard 相同，价值在兼容 soft labels。最小对照先用 L_J=1−sum(py)/(sum(p)+sum(y)−sum(py)+epsilon)，含前景和背景，接原始 logits 的 sigmoid，保留 STC。不能把 hard label soft IoU 说成新的 JML 方法；也不先引入尚无独立证据的教师蒸馏。
+3. **RankSEG: A Consistent Ranking-based Framework for Segmentation，JMLR 2023**：https://www.jmlr.org/beta/papers/v24/22-0712.html 。从 Dice/IoU 最优决策角度构造 RankDice/RankIoU，说明固定分类阈值不必对应最佳分割决策。适合作为已有 val 概率上的决策诊断，需检验概率校准、算法成本，以及 per-image 目标与本项目 dataset-global IoU 的差异；理论假设并非已在事件数据成立。不能简化成按 GT 数量选 top-k（推理时不可用 GT），也不能把阈值调优说成表示能力改进。
+4. **Asymmetric Loss for Multi-Label Classification，ICCV 2021**：https://openaccess.thecvf.com/content/ICCV2021/papers/Ridnik_Asymmetric_Loss_for_Multi-Label_Classification_ICCV_2021_paper.pdf 。对正负项使用不同聚焦与负类概率移位，是类别失衡的参考。但原任务为多标签分类、不是事件分割；过度忽略易负例可能恶化当前 FP。只作低优先参考，不直接恢复已删除旧 focal 路线。
+5. **Point Transformer V3: Simpler, Faster, Stronger，CVPR 2024**：https://openaccess.thecvf.com/content/CVPR2024/papers/Wu_Point_Transformer_V3_Simpler_Faster_Stronger_CVPR_2024_paper.pdf ，官方仓库 https://github.com/Pointcept/PointTransformerV3 。以序列化邻域降低注意力邻域组织开销并扩大感受野。若损失对照无效且诊断确认上下文不足，再考虑适配现有池化注意力；时空事件的 t 不能直接当可交换空间轴，不搬用室内点云结果或 PTv2 相对加速比作为 EV-UAV 保证。当前24GB显存已紧，不首轮换整主干。
+
+补充读物：**Exploring Cross-Image Pixel Contrast for Semantic Segmentation，ICCV 2021**，https://openaccess.thecvf.com/content/ICCV2021/html/Wang_Exploring_Cross-Image_Pixel_Contrast_for_Semantic_Segmentation_ICCV_2021_paper.html 。用语义对比改善特征可分性，与当前 FP 问题相关，但用户此前要求删除 embedding 路线，本轮不恢复该模块，也不列首批实验。
+
+以上来源为会议/期刊官方页面及论文，已在本轮联网核对；不是2026最新文献穷尽综述。文献中的其他数据集收益不构成 EV-UAV 收益证据。重心是目标适配，不能仅凭近期年份排序。
+
+### 10.3 最小验证矩阵与停止条件
+
+先补 val 输出：TP/FP/FN、precision、FP/GT、前景占比、逐序列 IoU，以及实际用于数据集全局 IoU 的累计计数；统一阈值网格与跨种子唯一阈值选择，不逐种子挑峰值。现有权重若缺失，可先加诊断入口供服务器执行，不虚构本地评估。
+
+第一轮从 A1 出发，固定 math、50 epochs、无早停、无自动 test、原采样/优化器，比较 A1、A1+Lovász、A1+soft Jaccard；λ先用0.1（工程起点，不是论文推荐值），必要时仅补0.03，不堆两种重叠损失、不叠R1。先seed37可运行性及初筛，候选均补13/73，保留三种子结果；seed37筛选可能错过受种子影响的方案，因此不称穷尽比较。损失梯度尺度和耗时必须记录，不以同一λ假定相同正则强度。
+
+候选目标：val 平均 IoU 至少约 +1pp、至少2/3配对方向为正、Pd/Fa代价明确；该门槛是研究预算规则，不是显著性结论。不满足则不扩展网格；若改架构/采样/训练计划，单独建受控对照。只用 val 选方法，已有 test 已被查看，后续新 test 必须透明说明后选择经历。
+
+可形成研究问题：是否能在事件级 IoU 对齐下减少高置信背景误检，同时保留稀疏前景召回？单纯加 Lovász/soft Jaccard 是成熟方法迁移/基线，不能宣称独立新颖贡献。先有稳健增益，再根据分组错误证据设计事件特定的时空竞争机制。
+
+2026-10-20 实现更新：第10节最小Lovász/soft Jaccard对照现已接入，40项CPU测试通过。仅CPU证据，待服务器执行；实现/运行入口见 NEXT_STEPS.md、TRAINING_COMMANDS.md。soft Jaccard在全负样本上显式回退背景BCE，不能将这一分支称纯IoU目标。

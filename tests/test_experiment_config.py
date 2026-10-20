@@ -32,6 +32,7 @@ class ExperimentConfigTest(unittest.TestCase):
         self.assertEqual((cfg.patch_attention, cfg.loss), ('sequence', 'stc'))
         self.assertEqual(set(args.EXPERIMENTS), {
             'a0', 'attention_fix', 'a1', 'r1_event', 'r2_balanced', 'r3_term',
+            'a1_lovasz', 'a1_jaccard',
         })
 
     def test_risk_overrides_and_separate_evaluation_bins(self):
