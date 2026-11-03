@@ -168,3 +168,50 @@ bash scripts/run_r1_precision.sh --dry-run
 判定预先看同阈值val@.9 IoU/precision/seg_acc/Pd/Fa以及全局与逐序列计数；另看跨seed统一阈值扫描，不只挑最高单次，不以单seed波动拒绝。检验R1_jaccard相对R1的收益、hardneg单独作用、组合是否比两单项更好。IoU仅靠召回大跌换取时不称四指标全面改进。只用val选方案，不因已查看的test_008对test做针对调参；后续投稿需披露test历史使用及最好独立数据补证。
 
 本地48项CPU测试通过，runner模拟编排验证通过（3smoke/4正式/24val、分支关闭权重恢复及打包），CLI/编译/shell检查通过。本地CUDA不可用，**未运行新方案CUDA训练，不承诺IoU收益**。
+
+## R1批次中途显存被占用（2026-10-21）
+
+r1_precision_20261020_224425_6e80b8在r1_jaccard_s37 epoch0/batch40 OOM：其他进程占约6.93GiB，训练前向仅余24.44MiB。无需据此改变损失/事件上限，也不应删除或终止不属于自己的进程。先在服务器看nvidia-smi并协调独占空闲GPU。
+
+同步最新版scripts/run_iou_ablation.py后，只重跑失败及未开始的三组：
+
+```bash
+nvidia-smi
+bash scripts/run_r1_precision.sh --gpu 0 --data-dir ../ev-uav-data --experiments r1_jaccard r1_hardneg r1_precision
+```
+
+这是新批次、三组从头50轮训练，不是从失败batch恢复；已完成原r1_event不重跑。新脚本每次启动训练/评估子进程前重查22GiB空闲显存，但不能防止他人在训练中途占卡。原批次 `runs/logs/r1_precision_20261020_224425_6e80b8/` 及原r1_event对应run目录不要删，之后需与新结果一并提供以保留基线。若GPU0忙，改为经nvidia-smi确认空闲的GPU编号。新测试仅CPU通过，无新CUDA结果。
+
+## 当前下一轮：R1较好方案 + SAM（2026-11-03）
+
+保留此前归档，不覆盖原模型/权重；在R1+Jaccard和R1_precision两个较好方案上分别对照普通Adam与SAM+Adam。SAM只改变训练过程，没有新损失、模型头或推理步骤。所有新选项默认关闭：`--sam_rho 0`保持旧训练，`.05`启用两遍前后向、一次Adam步进；`--sam_start_epoch 0`默认全程启用，参数从0计。详细文献和方案在ML_METHOD_SURVEY.md第13节。
+
+先将本次全部改动/新增文件同步到服务器，包含train.py、utils/args.py、utils/sharpness.py、scripts/run_iou_ablation.py、scripts/run_r1_sam.sh及相应tests。项目根目录执行：
+
+```bash
+bash scripts/run_r1_sam.sh --gpu 0 --data-dir ../ev-uav-data
+```
+
+默认：seed37，2个SAM单轮smoke → R1_jaccard(rho0/.05)和R1_precision(rho0/.05)，共4组正式50轮 → 每组val扫描.8/.85/.9/.95/.97/.98，共24次评估。其他协议与前轮一致：math、batch1、700000事件、Adam .01→.001线性、risk=.1、iou=.1、组合hardneg=.03、禁止早停和自动test，每轮val@.9选best_iou。控制组也重跑，不从旧best权重微调。
+
+按过去31–32分钟/普通组及SAM两倍前后向开销估计，约3–4小时，峰值显存和实际耗时需看服务器；一张空闲24GiB或更大GPU顺序运行。每个子进程前复查22GiB空闲显存，但不能防止运行中被其他任务挤占。任一错误即停并打印真实错误，不自动降低事件数、切后端或使用非严格权重加载。
+
+如果先只做较均衡的组合方案（2组，预计约1.5–2小时）：
+
+```bash
+bash scripts/run_r1_sam.sh --gpu 0 --data-dir ../ev-uav-data --experiments r1_precision
+```
+
+只预览命令、不训练：
+
+```bash
+bash scripts/run_r1_sam.sh --dry-run
+```
+
+半径参数可用 `--sam-rhos 0 0.03`替换默认0/.05；本轮不要同时扩展多个半径和种子。后期启用可显式 `--sam-start-epoch 25`，但非默认，且best_iou可能来自启用前；final metrics的best_iou_sam_active=false时不能归因为SAM。smoke会强制start=0以测试SAM分支。若用rho>0的训练单命令，start必须小于epochs。
+
+结果按variant分开命名，`sam0.05_e0`标记不会覆盖rho0基线。配置、源码快照/hash、数据清单、日志/指标、训练完整目录身份、冻结命令计划、逐序列val JSON自动入包。训练指标增加sam_perturbed_loss（扰动位置loss）、sam_first_grad_norm、sam_perturbation_norm、sam_active；原loss和seg/risk/iou/hardneg分项仍是第一遍未扰动目标，用于横向观察，不能与第二遍loss混称。
+
+跑完回传 `runs/logs/r1_sam_时间_标识.tar.gz`；权重留服务器，暂不跑test。我们先比较固定阈值.9和同Fa预算的val表现，再决定保留哪个variant、是否补种子/有限调参或终评。现有test曾被多轮查看，后续论文需透明披露。
+
+本地仅60项CPU测试/流程模拟/编译/dry-run通过，没有执行实际训练或CUDA验证；用户在独立服务器运行后回传。旧run_r1_precision.sh和run_iou_ablation.sh默认计划保持原样，不自动启用SAM。

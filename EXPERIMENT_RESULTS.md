@@ -205,3 +205,88 @@ s73 Jaccard Fa=2.70584e-06仍低，说明连通域计数的Fa可与大量错误�
 本批A1 test均值60.91%；Jaccard最佳单次66.61%、均值56.26%。两者不能与旧run混做受控对照，验证集72.25%也不是test结果。测试后不改阈值、不在test上挑epoch或反复补扫。若继续，优先在val困难背景中定位同类高置信FP，在val开发前景/背景竞争或其他机制；R1仍是候选但未在本批验证其与Jaccard组合。若用户转PACT，先复现和核对评估。test_008分析仅用于描述失败与形成未来假设，后续改进将受已观察test的影响，论文应透明披露，最好使用独立未见数据补证。
 
 本次只分析已有6次测试，未运行新增评估或修改模型代码；更新本结果记录与NEXT_STEPS.md。
+
+## 12. R1 三个改进方案首次服务器验证（2026-10-21）
+
+用户提供的实际包名为 `r1_precision_20261021_104437_461ed8.tar.gz`（消息中写成r1_9precision）；已安全解压到 `runs/imported_r1_precision_20261021_104437_461ed8/`。本节是 **val、seed37**，不是test或三种子均值。旧批次20261020_224425_6e80b8的原r1_event基线尚未回传，本地没有其val JSON；因此不能计算本次候选相对原R1的严格配对增益。历史R1或A1数字只能作跨批次参考。
+
+### 12.1 完整性
+
+RTX4090、PyTorch2.13+cu126，服务器48项CPU测试通过。manifest有25项成功命令：1CPU、3单轮smoke、3正式训练、18次val；没有失败/blocked_gpu或test命令。三组均50轮、50次验证、无早停/自动test、无training_error/文本NaN/Inf/OOM。参数为math/batch1/700000事件/Adam.01→.001线性/risk_weight=.1；Jaccard组iou=.1、hardneg=0，hardneg组iou=0、hardneg=.03，precision组iou=.1、hardneg=.03，其余配置相同（除experiment/run名）。
+
+27份源码快照全部匹配包内SHA256，且逐项与当前本地同名文件一致；服务器未包含本地后来新增的selection回归测试，所以CPU数量48而非本地51，不表示损失实现不同。val 24条序列、1424330事件、65506前景，逐序列TP/FP/FN之和、由计数重算IoU、训练best_iou与独立@.9评估全部一致。包有train/val文件清单与valhash，但不含checkpoint二进制，权重内容身份未独立验证。
+
+### 12.2 全部方法统一阈值0.9
+
+| 方案 | IoU | seg_acc | precision | Pd | Fa | FP | FN |
+|---|---|---|---|---|---|---|---|
+| R1+Jaccard | .7321 | .7477 | .9723 | .7818 | 2.94e-06 | 1393 | 16527 |
+| R1+hardneg | .7166 | .7358 | .9649 | .7598 | 2.78e-06 | 1755 | 17307 |
+| R1+Jaccard+hardneg | .7305 | .7564 | .9553 | .8053 | 3.54e-06 | 2321 | 15959 |
+
+@.9的best_iou保存轮（代码从0计）：r1_jaccard epoch34，r1_hardneg epoch16，r1_precision epoch15。每组约31.4–31.6分钟；每轮含val平均37.65/37.68/37.94秒。三个损失分项末batch日志和对应分支开关一致；困难背景项实际执行，没有以zero权重误跑。
+
+### 12.3 验证集阈值扫描
+
+| 阈值 | r1_jaccard IoU | r1_hardneg IoU | r1_precision IoU |
+|---|---|---|---|
+| .8 | .7325 | .6634 | .7304 |
+| .85 | **.7331** | .6939 | **.7318** |
+| .9 | .7321 | **.7166** | .7305 |
+| .95 | .7278 | .6951 | .7186 |
+| .97 | .7209 | .6620 | .7060 |
+| .98 | .7122 | .6294 | .6908 |
+
+各行仍是同一@.9选出的best checkpoint，仅变推理阈值，不重新挑epoch。候选主表（每方法val峰值）：
+
+| 方法/阈值 | IoU% | seg_acc% | Pd% | Fa |
+|---|---|---|---|---|
+| r1_jaccard@.85 | 73.31 | 75.24 | 78.79 | 3.58e-06 |
+| r1_hardneg@.9 | 71.66 | 73.58 | 75.98 | 2.78e-06 |
+| r1_precision@.85 | 73.18 | 76.71 | 82.36 | 4.76e-06 |
+| r1_precision@.8（召回操作点） | 73.04 | 77.66 | 83.70 | 6.04e-06 |
+
+@.85组合比Jaccard IoU−.13pp、seg_acc+1.47pp、Pd+3.57pp、Fa更高；组合在20/24序列IoU更高，等权macro=.7541 vs .7474，但主指标是全局事件IoU，不能改主指标来宣称组合胜出。@.8组合比自身@.85，IoU−.13pp、seg_acc+.95pp、Pd+1.34pp、Fa更高，操作点应在test前按目标冻结，不在test扫描。
+
+困难背景项加入组合后没有进一步压低该checkpoint的总FP（@.85 1721→3165，FN16220→15254），而是形成更高召回的训练结果；不能由loss命名直接断言其减少了FP，也不能据单seed证明协同机制。若只以IoU为终点，简单r1_jaccard目前最好；若同时考虑ACC/Pd，组合r1_precision值得保留。
+
+### 12.4 困难序列与后续
+
+@.85 val_015：r1_jaccard FP302、IoU.6071；hardneg FP1376、IoU.4683；组合FP1268、IoU.4608。Jaccard单项在这条容易严重误检的序列上更好，组合在其他更多序列上有收益。这是val诊断，不据此为某特定test序列手工设计规则。
+
+当前结论是三个候选均已完成CUDA验证并达到71–73%验证IoU，R1方向值得继续；尚不能宣称相对同批原R1的改进幅度，也不能与SpTopoNet/PACT测试表直接比较。下一步优先补回原批次r1_event_s37的6份val JSON及对应config/metrics/目录身份，再决定冻结r1_jaccard@.85或r1_precision@.85（或预先选择召回操作点.8）。用户偏好先单seed开发，不用波动否决，但若test再次评估需透明记录已查看test的后选择过程。本次未新增训练或test评估。
+
+分析产物：解压日志目录内 `analysis_metrics.csv`（18行）和 `analysis_summary.json`（每方案验证峰值），为本地分析生成，不属于原包；本次更新本文件与NEXT_STEPS.md。
+
+## 13. R1原基线补齐后的完整对照（2026-10-21）
+
+用户全量复制原始runs，现已读到原批次 `runs/logs/r1_precision_20261020_224425_6e80b8/` 和原R1 run `runs/train_r1p_r1_event_w0.1_s37_20261020_224425_6e80b8_20261020_224705/`。第12节“缺原R1无法配对”的证据缺口已补齐。
+
+两批27份源码hash各自与快照一致，批间只有scripts/run_iou_ablation.py发生修复变化，train.py、模型/损失/评估源码完全一致；train/val文件manifest一致（共123条），24条val的SHA256逐文件一致。训练数据只核对文件名/大小，没有训练文件内容hash，不夸大为训练数据二进制身份完全证明。原R1 completed50轮/50验证/no early stop，best_iou=.515390@epoch35（0起）。新方案与原R1控制参数相同，除experiment/run名/loss接入和预定新增项权重；不混用历史20261019的旧R1。均为RTX4090、math、seed37、risk=.1、固定50轮、val@.9挑checkpoint。跨批次GPU执行非确定性并未被完全排除，不把单次对照当普遍因果保证。
+
+### 13.1 相同阈值0.9（主要对照）
+
+| 方法 | IoU% | seg_acc% | precision% | Pd% | Fa | FP | FN |
+|---|---|---|---|---|---|---|---|
+| 原R1 | 51.54 | 73.46 | 63.33 | 77.01 | 6.66e-06 | 27866 | 17383 |
+| R1+Jaccard | **73.21** | 74.77 | **97.23** | 78.18 | 2.94e-06 | **1393** | 16527 |
+| R1+hardneg | 71.66 | 73.58 | 96.49 | 75.98 | **2.78e-06** | 1755 | 17307 |
+| R1+Jaccard+hardneg | 73.05 | **75.64** | 95.53 | **80.53** | 3.54e-06 | 2321 | **15959** |
+
+Jaccard相对原R1：IoU+21.67pp、seg_acc+1.31pp、Pd+1.18pp、Fa下降55.8%；FP下降95.0%、FN减少856。组合相对原R1：IoU+21.51pp、seg_acc+2.17pp、Pd+3.53pp、Fa下降46.9%；FP下降91.7%、FN减少1424。因此在这次seed37 val对照中，两者确实同时改善四核心指标，不是仅牺牲召回提高IoU。hardneg单项Pd下降1.03pp，不说四指标均提升。
+
+@.9序列IoU相对原R1改善数：Jaccard18/24、hardneg14/24、组合19/24；序列等权macro=.7026→.7444/.7280/.7482。val_015是最大误检来源：原R1 FP25951（总FP27866的93.1%）、序列IoU.0516；Jaccard FP207/IoU.6185、hardneg FP939/IoU.5026、组合FP870/IoU.5045。新增方案也减少其他序列净FP，但全局大幅收益仍主要由该困难序列驱动，不能泛化成每场景都增加21pp。
+
+### 13.2 各自val峰值统一阈值（单seed选择）
+
+原R1峰值@.85：IoU51.80、seg_acc74.61、Pd78.50、Fa8.80e-06。Jaccard@.85：73.31/75.24/78.79/3.58e-06，相对原R1同.85为IoU+21.52pp、seg_acc+.63pp、Pd+.29pp、Fa更低。组合@.85：73.18/76.71/82.36/4.76e-06，相对原R1为IoU+21.38pp、seg_acc+2.11pp、Pd+3.86pp、Fa更低。相同.85下组合比JaccardIoU−.13pp但Pd+3.57pp，与第12节取舍一致。
+
+当前建议：优先保留r1_precision@.85作四指标均衡候选，r1_jaccard@.85作IoU优先候选。若用户决定测试，需在运行前明确选一个/两个并冻结，不根据test挑阈值；现阶段没有自动追加test。此前测试失败提示val到test不必保持同样增益，不能用本节val数字宣称超过SpTopoNet/PACT。
+
+已将4组×6阈值共24条完整指标整理到 `runs/logs/r1_precision_20261021_104437_461ed8/r1_full_comparison.csv`，原数据/权重未修改。此次只更新结果记录与NEXT_STEPS.md，不改模型代码、不执行新评估。
+
+## 14. R1原始证据保存（2026-10-21）
+
+用户要求保存第12–13节结果。已创建 `runs/preserved/r1_validation_seed37_20261021.tar.gz`（33454171字节），SHA256 `b3403d19bd742e0fba09346114f8f2660322d0776557e9b72e4bdbbfaf436826`。包内包括原R1及三个改进组全部config/metrics、8份best_iou/best_loss权重、两个批次完整日志、24份val JSON、训练时源码快照与源码/数据清单，以及原传输包；145个成员逐文件从压缩包读回核对，与源文件SHA256一致。原始文件未修改。数据集NPZ未重复复制，只保留原始文件清单与val哈希。
+
+索引 `results/r1_validation_20261021/selected_results.csv` 固定保存用户选出的四行（r1_jaccard@.85、r1_hardneg@.9、r1_precision@.85/.8）；all_thresholds.csv保留全部24行和TP/FP/FN，provenance.json绑定split/seed/阈值/权重/评估JSON路径，raw_file_checksums.json记录原文件SHA256，archive.sha256为包外总校验。权重和大包仍在Git忽略的runs目录，本次只本地归档未新增远程备份或提交。当前结果均为val/seed37，不宣称超过论文test成绩。

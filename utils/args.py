@@ -98,6 +98,10 @@ def parse(extra: list[tuple[str, dict[str, Any]]] | None = None) -> argparse.Nam
                         help="trace backward NaNs and check inputs, outputs, parameters and buffers; slow")
     parser.add_argument("--grad_clip_norm", default=0.0, type=float,
                         help="gradient L2 norm cap; 0 disables clipping, finite checks always enabled")
+    parser.add_argument("--sam_rho", default=0.0, type=float,
+                        help="SAM perturbation radius; 0 exactly retains ordinary optimizer steps")
+    parser.add_argument("--sam_start_epoch", default=0, type=int,
+                        help="zero-based epoch to enable SAM; default 0, total epochs unchanged")
     parser.add_argument("--epochs", default=50, type=int)
     parser.add_argument("--lr", default=0.01, type=float,
                         help="initial learning rate")
@@ -175,6 +179,10 @@ def parse(extra: list[tuple[str, dict[str, Any]]] | None = None) -> argparse.Nam
     if selected.experiment:
         parser.set_defaults(**EXPERIMENTS[selected.experiment])
     cfg = parser.parse_args()
+    if not math.isfinite(cfg.sam_rho) or cfg.sam_rho < 0:
+        parser.error("--sam_rho must be finite and nonnegative")
+    if cfg.sam_start_epoch < 0 or (cfg.sam_rho > 0 and cfg.sam_start_epoch >= cfg.epochs):
+        parser.error("SAM start epoch must be nonnegative and, when enabled, less than epochs")
     if cfg.loss in {"stc_iou", "stc_r1_precision"} and (not math.isfinite(cfg.iou_weight) or cfg.iou_weight < 0):
         parser.error("--iou_weight must be finite and nonnegative")
     if cfg.loss == "stc_r1_precision":

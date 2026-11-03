@@ -321,3 +321,51 @@ Group DRO 更适合已有可靠分组且样本充足时使用。先按训练集�
 ## 12. R1 精度改进对照已实现（2026-10-20）
 
 依据前景辅助监督未增加负类约束的代码事实，以及val中误检集中的证据，先检验普通损失组合而非恢复旧运动路线：原R1、R1+soft Jaccard、R1+top-k背景BCE、两者组合，所有项独立开关。此为常规IoU对齐/困难负例挖掘的工程控制实验，不构成新颖性主张；test失败样本已被查看，后续研究受其启发需披露，不针对test_008手工设计标签/筛样本。开发默认seed37、math固定50轮及val扫描；主假设是FP减少同时尽量保留R1的前景召回，可能被实验否定。基线/消融/预算/指标完整计划在TRAINING_COMMANDS.md末尾。未使用PACT代码或恢复已删除模块，未运行CUDA，48项CPU测试通过仅证明数值/接入正确。
+
+## 13. 2026-11-03：在R1较好方案上加入SAM优化对照
+
+### 问题与研究假设
+
+当前较好的原始证据仍是seed37 val：R1+Jaccard@.85 IoU73.31%，R1_precision@.85 IoU73.18/ACC76.71/Pd82.36%。它们尚无本轮新test结论。此前A1+Jaccard的val收益未整体转移到test，提示仅优化样本损失并不保证泛化；这不是“损失曲面尖锐”的直接测量证据，只是检验优化正则的动机。假设：在相同主干、损失、事件采样、50轮计划下，SAM是否能改善验证IoU与前景/背景权衡，不再新增一项前景加权损失。
+
+### 候选收敛与文献核对
+
+本轮使用问题导向、失败分析、组合/分解与简单性比较四个角度，筛选以下10个候选。未把“未找到同样EV-UAV应用”误当新颖性证明。
+
+| 候选 | 本轮取舍 |
+|---|---|
+| SAM平坦邻域优化 | **实现**；不新增推理参数、可独立关闭，直接检验优化假设 |
+| 后期启用SAM | **仅参数支持**；可减少开销，但本轮默认全程SAM，避免最佳checkpoint在启用前导致误归因 |
+| 前景/背景排序损失 | 已检索RS Loss；与现有困难背景监督可能重叠，暂不再叠损失 |
+| 监督对比表征 | 已检索SupCon；需增加采样/特征头且接近已删除embedding路线，不首选 |
+| 软标签Jaccard/蒸馏 | 已有JML文献参考，教师质量和校准未证实，暂不叠加 |
+| Group DRO | 困难组定义/每组样本量未核实，暂缓 |
+| 实例/时间箱风险再加权 | 已有R2/R3证据，不能重复TERM作为新实现 |
+| 时序路径监督 | 历史候选，需图预算和负例竞争，当前IoU目标下工程成本更高 |
+| 序列化状态空间主干 | PointEvent已有相近路线，当前不换主干 |
+| 前景感知裁剪/采样 | 可作为后续单独协议，但不与本轮优化器修改混合归因 |
+
+本轮新核对的主来源：
+
+- Foret等，**Sharpness-Aware Minimization for Efficiently Improving Generalization**，ICLR2021。论文 https://arxiv.org/abs/2010.01412 ，作者实现 https://github.com/google-research/sam 。对参数邻域损失进行min-max优化，作者在图像分类等任务报告泛化收益；不保证事件分割收益。OpenReview入口本轮遇验证页，交叉核对作者仓库/论文，未复制JAX代码。
+- Zhou等，**Sharpness-Aware Minimization Efficiently Selects Flatter Minima Late In Training**，ICLR2025。官方 https://proceedings.iclr.cc/paper_files/paper/2025/hash/35d5ad984cc0ddd84c6f1c177a2066e5-Abstract-Conference.html 。研究后期启用SAM；不能把SGD设置结论直接当作本项目Adam+稀疏卷积的保证。
+- Oksuz等，**Rank & Sort Loss for Object Detection and Instance Segmentation**，ICCV2021。官方 https://openaccess.thecvf.com/content/ICCV2021/html/Oksuz_Rank__Sort_Loss_for_Object_Detection_and_Instance_Segmentation_ICCV_2021_paper.html 。排名正负例并按定位质量排序正例，本项目事件分割标签没有检测框IoU监督，故不直接照搬其正例排序。
+- Khosla等，**Supervised Contrastive Learning**，NeurIPS2020。官方 https://proceedings.neurips.cc/paper/2020/hash/d89a66c7c80a29b1bdbab0f2a1a94af8-Abstract.html 。同类拉近、异类推远的表征学习，不等同于本项目直接优化IoU，本轮不恢复旧embedding头。
+
+### 本项目实现与边界
+
+新增utils/sharpness.py的普通L2 SAM，参数扰动epsilon=rho*g/||g||，对现有Adam/SGD使用原batch第二次前后向的梯度更新；不声称自适应SAM、ASAM或新优化理论。rho=0走原训练分支，模型state_dict键形状和推理接口不变。第二次前向仍使用BatchNorm批统计，但不重复更新running均值/方差/计数；完成或异常时均精确恢复原参数，再执行一次Adam.step。第一遍loss用于原日志/epoch_loss，另记sam_perturbed_loss、sam_first_grad_norm、sam_active及扰动半径。两次前后向不同时保留完整图，但实际GPU峰值待服务器核验。
+
+参数 --sam_rho（默认0）、--sam_start_epoch（默认0，从0计）。如后期启用，final metrics显式记录best_iou_epoch/best_iou_sam_active，不能把启用前选中的checkpoint当作SAM收益。本轮服务器脚本默认从epoch0启用，半径.05是有限工程初始值，不是EV-UAV最优参数。
+
+### 预注册式最小实验与判定
+
+默认seed37，R1_jaccard / R1_precision各rho0/.05，4组50轮math，原损失权重、事件数、Adam与线性计划完全保持。从头训练而非旧best微调；按相同val@.9选checkpoint，之后各扫6个相同阈值，不评test。默认2次SAM单轮smoke（若后期方案，smoke强制epoch0启用以覆盖新分支）。rho0重跑是本批环境基线，不只比较历史最好值。
+
+固定.9对照是主判断，另统一阈值比较；记录IoU/ACC/Pd/Fa/precision/TP/FP/FN和逐序列指标，不能以低连通域Fa替代事件误检诊断。参考预算门槛为val IoU约+1pp且召回代价可接受，若只有Pd改善则按权衡记录、不宣传IoU收益；不因单seed波动自动否决，也不在本轮无限扫rho。通过后再补13/73，若无有效收益暂停优化器路线。SAM每步多一次前后向，预计默认四组约3–4小时，具体时间/显存看服务器日志。
+
+这是一项成熟优化方法迁移与受控实验，不构成论文独立新颖贡献。若有效，后续应结合训练/验证中的密度和背景干扰错误解释机制，并在独立数据上补泛化验证；当前测试集已被多轮查看，不能声称后续迭代从未使用过test信息。
+
+### 执行状态
+
+用户已说明有独立训练服务器，本地只修改代码和检查，不启动实际训练。2026-11-03核验本地torch2.13+cu126 CUDA不可用、HAIS_OP可导入、/data/ev-uav有99/24/24文件。60项CPU测试通过，覆盖SAM闭式二次目标、Adam只步进一次、rho0一致、异常恢复、BN仅更新一次、全局范数/极端梯度与参数/计划校验；模拟流程验证2smoke/4正式/24val且不串权重，shell dry-run与编译通过。没有新增CUDA、训练或精度收益证据。运行说明见TRAINING_COMMANDS.md当前SAM小节，用户训练回包后再分析。

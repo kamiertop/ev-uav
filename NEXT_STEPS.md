@@ -1,8 +1,19 @@
 # EV-UAV 当前路线与交接
 
-更新：2026-10-20。此文件是唯一接手入口；过时研究计划和旧交接文档已移除。
+更新：2026-11-03。此文件是唯一接手入口；过时研究计划和旧交接文档已移除。
 
 `AGENTS.md` 和 README 仅引导到此文件，不维护另一份计划。本文记录截至上述日期的证据，接手时重新核验工作区和环境；当前功能以代码为准，运行参数以对应 config.json 为准，论文调研中的候选方案不等于已实现功能。
+
+
+## 当前执行点（2026-11-03）
+
+用户要求基于此前R1较好结果继续查顶会方法、参数化改进并给服务器脚本；已明确训练由独立服务器执行，本地只写代码/做必要正确性检查，不启动实际训练。原R1 Jaccard/precision的73%左右证据仍是seed37 val，不是test。原始145文件/8权重归档完整保留，未改动。
+
+本轮联网核对SAM(ICLR2021)、Late SAM(ICLR2025)、RS Loss(ICCV2021)、SupCon(NeurIPS2020)，优先检验SAM优化而非再叠损失。新增utils/sharpness.py，train.py接入--sam_rho默认0（关闭）、--sam_start_epoch默认0；保留现有R1损失、主干/参数键、推理和50轮协议。第二遍BN使用批统计但不重复更新running buffers，完成或异常恢复原权重后Adam仅步进一次；rho0走原路径。支持后期SAM但默认全程启用，final记录最佳轮次及是否SAM阶段，避免把早期权重误归因。
+
+服务器入口 `bash scripts/run_r1_sam.sh --gpu 0 --data-dir ../ev-uav-data`：默认seed37、R1_jaccard/r1_precision各rho0/.05，共4组50轮math，2个SAM单轮smoke，24次val；不test。可先--experiments r1_precision仅2组。预计4组约3–4小时（未实测），CPU60项测试、模拟2smoke/4正式/24val、编译/shell/dry-run通过；本地CUDA仍不可用，未执行新训练或精度验证。
+
+本次文件：utils/sharpness.py、utils/args.py、train.py、scripts/run_iou_ablation.py、scripts/run_r1_sam.sh、tests/test_sharpness.py、tests/test_ablation_selection.py、TRAINING_COMMANDS.md、ML_METHOD_SURVEY.md、本文件。保留先前未提交修改、results索引和用户压缩包，不擅自提交推送。方案依据/局限见ML_METHOD_SURVEY.md第13节，远程完整命令见TRAINING_COMMANDS.md最后小节。下一步用户同步更新包并服务器执行，回传runs/logs/r1_sam_*.tar.gz后按固定阈值/同Fa/逐序列计数分析；SAM本身不是论文新算法，不承诺提升、不在当前已查看test上反复筛选。
 
 ## 1. 当前目标与保留内容
 
@@ -211,6 +222,36 @@ R3 不优于 R2 时保留简单方案。初筛成立后再有限扫描 lambda∈
 下一步同步全部改动和新文件到服务器运行 `bash scripts/run_r1_precision.sh --gpu 0 --data-dir ../ev-uav-data`；默认seed37、3个新组1轮smoke后四组50轮math，val扫.8/.85/.9/.95/.97/.98，预计2–2.5小时。可选--seeds37/13/73补验证，不自动追加test。回传runs/logs/r1_precision_*.tar.gz，保留服务器权重。具体指标、实验矩阵、预算和停止条件见TRAINING_COMMANDS.md末尾，不新增重复交接文档。
 
 2026-10-20 用户授权提交并推送：本轮提交范围为R1改进源码/测试/脚本、IoU终评脚本及最新实验与调研记录；48项CPU测试已通过。实验结果tar.gz留在本地，不纳入Git；新方案仍待服务器CUDA验证。提交及远程同步最终状态以Git为准。
+
+## 2026-10-21 R1实验被GPU争用中断，非数值失败
+
+用户提供批次r1_precision_20261020_224425_6e80b8的真实日志：r1_jaccard_s37在epoch0/batch40、stage=forward的BatchNorm分配30MiB时CUDA OOM。GPU0共23.53GiB，仅余24.44MiB；其他PID1551992占6.93GiB，PID1542991占384MiB，本训练进程共16.17GiB（torch allocated15.37GiB、reserved空闲295.5MiB）。证据支持GPU争用为主要直接原因，不是loss NaN/梯度错误；不据此降低700000事件上限或修改协议。按脚本顺序推断本批r1_event训练及6次val已完成；原结果/权重保留，完整日志包尚未回传。
+
+runner已补--experiments选择剩余组、新模型子进程启动前复查22GiB空闲显存，以及失败时打印日志末45行。新选项是对所选组从头50轮重跑，不是从中断batch/权重续训；已完成R1不重跑。新增tests/test_ablation_selection.py，51项CPU测试通过、dry-run/编译检查通过；未执行服务器CUDA。新显存检查只能发现进程启动前的争用，不能阻止别人中途占卡，服务器应独占GPU调度。
+
+同步scripts/run_iou_ablation.py后，先nvidia-smi确认GPU0空闲，再执行 `bash scripts/run_r1_precision.sh --gpu 0 --data-dir ../ev-uav-data --experiments r1_jaccard r1_hardneg r1_precision`；也可换已确认空闲的GPU。新包仅含剩余三组，分析时需原批次logs及r1_event config/metrics/权重目录身份作为基线。本次改动runner、新回归测试、TRAINING_COMMANDS.md、本文件；未提交推送，保留用户压缩包及旧结果。
+
+## 2026-10-21 R1三个候选结果已回收
+
+实际包r1_precision_20261021_104437_461ed8.tar.gz（用户消息r1_9precision为笔误），解压到runs/imported_r1_precision_20261021_104437_461ed8/。三个方案均seed37/50轮math、18次val完整、服务器48项CPU通过、无NaN/OOM/失败；27份源码hash匹配快照及本地同名文件。@.9 IoU：r1_jaccard=.7321、r1_hardneg=.7166、r1_precision=.7305。各方法val峰值：r1_jaccard@.85 IoU73.31/ACC75.24/Pd78.79/Fa3.58e-06；r1_hardneg@.9=71.66/73.58/75.98/2.78e-06；r1_precision@.85=73.18/76.71/82.36/4.76e-06。组合@.8为73.04/77.66/83.70/6.04e-06，可作召回操作点但test前必须冻结。
+
+这是val，不与论文test表混比；原批次20261020_224425_6e80b8的r1_event基线未回传，不能计算本轮相对原R1严格配对增益。组合对Jaccard单项@.85 IoU−.13pp、ACC+1.47pp/Pd+3.57pp/FP更多：不是hardneg直接降低FP的证明。单项Jaccard在val_015更好、组合20/24序列IoU改善，二者作为精度/召回候选保留，hardneg单项目前次选。
+
+完整审计及阈值表见EXPERIMENT_RESULTS.md第12节；18行CSV/峰值JSON在解压日志目录。下一步优先请用户补原批次r1_event_s37阈值JSON和对应config/metrics，再决定冻结哪一个候选；没有自动追加test或新训练，不以单seed波动否决R1。本轮只改EXPERIMENT_RESULTS.md、本文件及被忽略的解压/分析产物，保留先前未提交脚本修复与用户结果包。
+
+## 2026-10-21 原R1全量结果已补齐，完整对照成立
+
+原批次runs/logs/r1_precision_20261020_224425_6e80b8及对应train_r1p_r1_event...224705已复制到本地。原R1完整50轮/50val。两批训练/模型/损失/评估source hash一致，仅runner修复不同；train/val清单相同，24条val文件内容SHA256一致（train仅名称大小）。本轮可比的seed37 val@.9：原R1 IoU51.54/ACC73.46/Pd77.01/Fa6.66e-06；R1+Jaccard73.21/74.77/78.18/2.94e-06；hardneg71.66/73.58/75.98/2.78e-06；组合73.05/75.64/80.53/3.54e-06。
+
+Jaccard和组合相对原R1四核心指标都改善：IoU+21.67/+21.51pp，FP降95.0%/91.7%，召回也升。val_015原FP25951→207/870，是主收益来源；18/24与19/24序列IoU改善，不把全局21pp泛化到所有场景或测试。原R1val峰值@.85 IoU51.80，Jaccard@.85 73.31，组合@.85 73.18/ACC76.71/Pd82.36/Fa4.76e-06。优先保留组合为四指标候选，Jaccard为IoU优先候选，等待用户决定下一步冻结终评或补验证，未自行追加test。
+
+完整结果在EXPERIMENT_RESULTS.md第13节，24行CSV在runs/logs/r1_precision_20261021_104437_461ed8/r1_full_comparison.csv。第12节缺基线状态已被本节新证据替代；旧历史test/val不混合成配对结果。此次仅改本文件与EXPERIMENT_RESULTS.md，不改代码、不运行新评估，保留所有原始结果和用户工作区修改。
+
+## 2026-10-21 用户要求保存R1原始证据，已归档校验
+
+完整本地归档 `runs/preserved/r1_validation_seed37_20261021.tar.gz`，33454171字节（约31.9MiB），包括原R1与三个改进组的config/metrics、8份best_iou/best_loss权重、原/新批次完整日志与24份val JSON、源码快照/哈希及原传输包。未包含数据集NPZ本体，原日志已记录val数据哈希。145个归档文件均从压缩包读回验证SHA256与源文件一致，未改写原始结果。
+
+可版本管理的数字索引在results/r1_validation_20261021/：selected_results.csv（用户选定4行、同次权重对应阈值）、all_thresholds.csv（24行含原R1）、provenance.json、raw_file_checksums.json与archive.sha256。归档SHA256=b3403d19bd742e0fba09346114f8f2660322d0776557e9b72e4bdbbfaf436826。四行均标记val/seed37，不当论文test比较或多seed均值。大包/权重在runs下仍被Git忽略；本次只本地保存，未提交或推送，不代表异地备份。新增以上索引并更新本文件与EXPERIMENT_RESULTS.md。
 
 ## 7. 未完成项
 
