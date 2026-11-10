@@ -290,3 +290,34 @@ Jaccard相对原R1：IoU+21.67pp、seg_acc+1.31pp、Pd+1.18pp、Fa下降55.8%；
 用户要求保存第12–13节结果。已创建 `runs/preserved/r1_validation_seed37_20261021.tar.gz`（33454171字节），SHA256 `b3403d19bd742e0fba09346114f8f2660322d0776557e9b72e4bdbbfaf436826`。包内包括原R1及三个改进组全部config/metrics、8份best_iou/best_loss权重、两个批次完整日志、24份val JSON、训练时源码快照与源码/数据清单，以及原传输包；145个成员逐文件从压缩包读回核对，与源文件SHA256一致。原始文件未修改。数据集NPZ未重复复制，只保留原始文件清单与val哈希。
 
 索引 `results/r1_validation_20261021/selected_results.csv` 固定保存用户选出的四行（r1_jaccard@.85、r1_hardneg@.9、r1_precision@.85/.8）；all_thresholds.csv保留全部24行和TP/FP/FN，provenance.json绑定split/seed/阈值/权重/评估JSON路径，raw_file_checksums.json记录原文件SHA256，archive.sha256为包外总校验。权重和大包仍在Git忽略的runs目录，本次只本地归档未新增远程备份或提交。当前结果均为val/seed37，不宣称超过论文test成绩。
+
+## 15. SAM服务器结果（2026-11-10）
+
+原包 `r1_sam_20261110_121715_c91ef8.tar.gz`，SHA256 `2e56e8aaff71cb639e8bd58a6fdee0adabeefc94983b347c1bd368d933347614`；解压至 `runs/imported_r1_sam_20261110_121715_c91ef8/`，98个文件，无checkpoint。原包保留，未改写。数字索引、完整24行阈值表、原文件校验在 `results/r1_sam_20261110/`。
+
+### 15.1 完整性与协议
+
+RTX4090、torch2.13.0+cu126，seed37/math/Adam/50轮，训练batch1、max_events700000、lr .01→.001、val@.9选择best_iou；无早停、不自动test。60项服务器CPU测试通过，2个SAM smoke、4组正式训练、24次val均返回0；日志未见Traceback/NaN/Inf/CUDA OOM。每组4950个batch、50次val完整；两组SAM的全部4950个batch均记录sam_active=1、扰动半径.05，最佳checkpoint均在SAM阶段。每组配对config仅run_name、sam_rho不同。24份评估逐序列TP/FP/FN/events加总吻合全局，IoU按计数复算吻合；源码快照逐项哈希验证通过。
+
+### 15.2 同批配对结果
+
+四组在本轮六个预设阈值中的IoU峰值均为.9，以下全部val@.9：
+
+| 方案 | IoU% | ACC% | Pd% | Fa | FP | FN | 最佳epoch（0起） |
+|---|---|---|---|---|---|---|---|
+| R1+Jaccard | 65.94 | 74.04 | 79.13 | 6.19e-06 | 8040 | 17007 | 35 |
+| R1+Jaccard+SAM | 63.84 | 71.54 | 71.42 | 4.67e-06 | 7902 | 18645 | 28 |
+| R1+两项组合 | 64.26 | 71.03 | 72.34 | 4.88e-06 | 6902 | 18974 | 27 |
+| R1+两项组合+SAM | 57.06 | 70.77 | 75.85 | 1.44e-05 | 15739 | 19145 | 47 |
+
+SAM对Jaccard：IoU−2.11pp、ACC−2.50pp、Pd−7.71pp，Fa下降24.6%；只减少138 FP，却新增1638 FN。组合：IoU−7.20pp、ACC−.26pp、Pd+3.51pp、Fa增约195.1%；FP增加8837、FN增加171。不能因为组合Pd升高就称总体收益。
+
+两组SAM在各自六个相同阈值上IoU均低于未启用SAM对照。近Fa比较也未显示Jaccard+SAM优势：SAM@.9 Fa4.67e-6、IoU63.84/Pd71.42，对照@.95 Fa3.16e-6（更低）、IoU65.82/Pd76.86（更高）；不是插值后的严格等Fa。序列IoU改善数分别8/24、9/24，等权macro为.7217→.6913、.6888→.6794。val_015组合FP5489→11620，val_023 FP1019→3598，共8710，占净增8837的98.6%；这解释主要FP增加，但不猜测具体场景原因。
+
+实际50轮训练含每轮val耗时：Jaccard37.6min→SAM50.7min，组合37.9min→SAM51.0min，约增加35%；全批含smoke及独立val约3小时8分。当前不推荐继续扩大rho=.05全程SAM实验或把SAM作为提升方法报告；不等于证明所有SAM参数均无效。
+
+### 15.3 跨批次基线漂移及下一步
+
+本轮无SAM基线@.9由10月21日Jaccard73.21降至65.94（−7.27pp），组合73.05降至64.26（−8.79pp）；不能把这些跨批次下降归到SAM。两批data_manifest完全一致（训练名称/大小、验证另有内容SHA256），模型/损失/评估源码哈希一致，新增变化为SAM训练分支、参数/runner/测试；rho0未进入新增训练分支。尚未定位漂移原因，不断言是代码回归或CUDA非确定性。旧最佳结果与权重继续保留，不被新基线覆盖。
+
+val_015旧→新无SAM FP：Jaccard207→5715，组合870→5489，是明显漂移来源。优先核验旧最佳checkpoint在当前服务器、同val阈值下能否恢复旧数字，区分重训轨迹差异与评估/权重身份问题；无需重训即可检查。此前尚未终评的旧最佳Jaccard@.85及组合@.85可以预先冻结后进行test，检验验证收益是否转移；不建议用test救选本轮SAM，不扫描test阈值或混用不同模型指标。当前未执行任何新推理或训练。

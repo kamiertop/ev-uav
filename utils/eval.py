@@ -5,7 +5,6 @@ import torch
 import cv2
 import numpy as np
 import pandas as pd
-import tqdm
 
 from utils import args as _args
 
@@ -44,10 +43,6 @@ def run_test(model_path: str, cfg, *, device: str = "cuda:0", split: str = "test
     )
 
     evaluator = evalute(cfg)
-    pbar = tqdm.tqdm(
-        total=len(loader), desc=split.capitalize(), unit="video",
-        unit_scale=True, position=0, leave=True,
-    )
 
     for sample, ev in enumerate(loader):
         with torch.no_grad():
@@ -74,8 +69,6 @@ def run_test(model_path: str, cfg, *, device: str = "cuda:0", split: str = "test
                         ts, preds, idx, label.cpu(), ev_locs,
                         thresh=cfg.prediction_thresh,
                     )
-
-        pbar.update(1)
 
     results: dict = {}
     if cfg.eval:

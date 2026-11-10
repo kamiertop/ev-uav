@@ -215,3 +215,15 @@ bash scripts/run_r1_sam.sh --dry-run
 跑完回传 `runs/logs/r1_sam_时间_标识.tar.gz`；权重留服务器，暂不跑test。我们先比较固定阈值.9和同Fa预算的val表现，再决定保留哪个variant、是否补种子/有限调参或终评。现有test曾被多轮查看，后续论文需透明披露。
 
 本地仅60项CPU测试/流程模拟/编译/dry-run通过，没有执行实际训练或CUDA验证；用户在独立服务器运行后回传。旧run_r1_precision.sh和run_iou_ablation.sh默认计划保持原样，不自动启用SAM。
+
+## SAM本批次正式测试（2026-11-10）
+
+用户决定测试SAM。同步 `scripts/test_r1_sam.py` 和 `scripts/test_r1_sam.sh` 到训练服务器同一项目，保留原runs目录与四组checkpoint，在项目根运行：
+
+```bash
+bash scripts/test_r1_sam.sh --gpu 0 --data-dir ../ev-uav-data
+```
+
+固定批次20261110_121715_c91ef8、seed37、best_iou权重、math，四组（Jaccard及组合，各有/无SAM）统一test阈值.9；该阈值来自本批val峰值，不扫test阈值。不重训，不依赖旧10月21日权重。启动前校验所有config、训练完成状态与权重存在，缺任一个即停止；可加--dry-run预览（不检查权重、不访问数据）。如runs不在默认位置，用--runs-root PATH。
+
+保存四指标/precision/TP/FP/FN的summary.csv、完整逐序列JSON、日志、冻结计划、checkpoint SHA256与训练config/metrics，成功或测试中途失败均打包已有产物。回传 `runs/logs/r1_sam_test_*.tar.gz`；包不含权重。脚本已完成本地真实配置dry-run、模拟四次测试和打包、错误rho拒绝、编译和shell检查，未在本地启动实际推理。服务器实际耗时尚未测定。

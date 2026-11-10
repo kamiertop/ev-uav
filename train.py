@@ -10,7 +10,6 @@ Usage::
 import torch
 import time
 import torch.optim as optim
-import tqdm
 
 from dataset.ev_uav import EvUAV
 from model.evspsegnet import evspsegnet
@@ -119,10 +118,6 @@ def main():
         torch.cuda.reset_peak_memory_stats(device)
         net.train()
         epoch_loss = 0.0
-        pbar = tqdm.tqdm(
-            total=len(train_dataloader), unit="Batch", unit_scale=True,
-            desc=f"Epoch: {epoch}", position=0, leave=True,
-        )
 
         for batch_idx, ev in enumerate(train_dataloader):
             optimizer.zero_grad(set_to_none=True)
@@ -203,11 +198,6 @@ def main():
                 ) from exc
             epoch_loss += loss.item()
 
-            pbar.set_postfix(
-                loss=loss.item(), lr=optimizer.param_groups[0]["lr"],
-            )
-            pbar.update(1)
-
             with torch.no_grad():
                 run.log_metric(
                     epoch, batch_idx, loss=loss.item(), grad_norm=grad_norm,
@@ -226,6 +216,18 @@ def main():
             epoch < args.cfg.val_start_epoch
             or (epoch - args.cfg.val_start_epoch) % args.cfg.val_interval != 0
         ):
+            torch.cuda.synchronize(device)
+            epoch_seconds = time.perf_counter() - epoch_started
+            run.log_metric(
+                epoch, None, epoch_loss=epoch_loss, epoch_seconds=epoch_seconds,
+                peak_cuda_allocated_bytes=torch.cuda.max_memory_allocated(device),
+                peak_cuda_reserved_bytes=torch.cuda.max_memory_reserved(device),
+            )
+            print(
+                f"[train] Epoch {epoch + 1}/{args.cfg.epochs}  "
+                f"loss={epoch_loss:.4f}  time={epoch_seconds:.1f}s",
+                flush=True,
+            )
             continue
 
         net.eval()
@@ -260,12 +262,23 @@ def main():
             )
             event_metrics = evaluator.evaluate_event_counts(thresh=args.cfg.prediction_thresh)
             torch.cuda.synchronize(device)
+            epoch_seconds = time.perf_counter() - epoch_started
             run.log_metric(
                 epoch, None, epoch_loss=epoch_loss, iou=iou.item(),
                 seg_acc=seg_acc.item(), **trajectory_metrics, **event_metrics,
-                epoch_seconds=time.perf_counter() - epoch_started,
+                epoch_seconds=epoch_seconds,
                 peak_cuda_allocated_bytes=torch.cuda.max_memory_allocated(device),
                 peak_cuda_reserved_bytes=torch.cuda.max_memory_reserved(device),
+            )
+            print(
+                f"[train] Epoch {epoch + 1}/{args.cfg.epochs}  "
+                f"loss={epoch_loss:.4f}  iou={iou.item():.4f}  "
+                f"seg_acc={seg_acc.item():.4f}  "
+                f"precision={event_metrics['precision']:.4f}  "
+                f"coverage={trajectory_metrics['trajectory_coverage']:.4f}  "
+                f"longest={trajectory_metrics['trajectory_longest_ratio']:.4f}  "
+                f"time={epoch_seconds:.1f}s",
+                flush=True,
             )
 
             validation_rounds += 1

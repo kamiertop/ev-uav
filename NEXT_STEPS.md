@@ -1,11 +1,35 @@
 # EV-UAV 当前路线与交接
 
-更新：2026-11-03。此文件是唯一接手入口；过时研究计划和旧交接文档已移除。
+更新：2026-11-10。此文件是唯一接手入口；过时研究计划和旧交接文档已移除。
 
 `AGENTS.md` 和 README 仅引导到此文件，不维护另一份计划。本文记录截至上述日期的证据，接手时重新核验工作区和环境；当前功能以代码为准，运行参数以对应 config.json 为准，论文调研中的候选方案不等于已实现功能。
 
 
-## 当前执行点（2026-11-03）
+## 2026-11-10 SAM测试脚本提交同步
+
+用户要求提交并推送，提交范围为SAM测试入口、实验分析/运行说明/本交接，以及已有train.py/utils/eval.py日志简化修改。60项CPU测试、Python编译、shell语法与git diff格式检查通过，无本地实际训练或推理。用户已暂存的.python-version与README.zh-CN.md属于其他修改，保留暂存状态，不纳入本次提交。大包/权重/results仍被Git忽略，不随推送上传。下一步服务器拉取main后执行 `bash scripts/test_r1_sam.sh --gpu 0 --data-dir ../ev-uav-data`，回传输出包。提交/推送最终状态以Git为准。
+
+## 2026-11-10 用户决定测试本轮SAM
+
+新增scripts/test_r1_sam.py及.sh，固定20261110_121715_c91ef8四组最佳val权重（Jaccard/组合各rho0/.05）、seed37、math、test@.9。用户明确要求测试SAM，本次优先执行该终评；旧权重复评仍为后续诊断，不阻塞本轮测试。不重训、不扫描test、不自动混入旧批次。服务器命令 `bash scripts/test_r1_sam.sh --gpu 0 --data-dir ../ev-uav-data`，回传runs/logs/r1_sam_test_*.tar.gz。
+
+全四组启动前校验配置/完成状态/权重，保存冻结计划、权重hash、训练config/metrics、逐序列JSON、CSV和日志；失败保留并打包已完成项。真实本批配置dry-run、模拟4次推理与打包及错rho拒绝、Python编译/shell语法通过；没有本地CUDA推理。已更新TRAINING_COMMANDS.md，本次未改训练/评估源码或旧结果，保留用户现有修改。下一步由用户在服务器运行并回传结果。
+
+## 2026-11-10 SAM日志已回收：当前参数无收益
+
+用户服务器包 `r1_sam_20261110_121715_c91ef8.tar.gz` 已安全解压到 `runs/imported_r1_sam_20261110_121715_c91ef8/`；原包SHA256=2e56e8aaff71cb639e8bd58a6fdee0adabeefc94983b347c1bd368d933347614。四组50轮、2smoke、24val完整成功，60项服务器CPU通过，无日志数值/显存失败；SAM每组4950batch全程实际启用。结果是val/seed37，不是test。
+
+@.9（亦为本批各组IoU峰值）：Jaccard无SAM/有SAM IoU65.94/63.84，ACC74.04/71.54，Pd79.13/71.42，Fa6.19e-6/4.67e-6；组合无SAM/有SAM IoU64.26/57.06，ACC71.03/70.77，Pd72.34/75.85，Fa4.88e-6/1.44e-5。当前rho=.05全程SAM不推荐保留为提升方案。实际每组训练37.6–37.9min→50.7–51.0min。
+
+本轮无SAM也比10月21日约73%基线低7–9pp；data_manifest（含val内容hash）相同、模型/损失/评估源码hash一致，原因尚未定位，不能全归SAM。下一步优先用旧最佳权重同val复评核验；旧Jaccard@.85/组合@.85仍可预先冻结后test，不根据test扫阈值或救选SAM。详见EXPERIMENT_RESULTS.md第15节；完整24行及summary/checksums在results/r1_sam_20261110/。原归档/旧结果/权重未改，本次仅新增分析记录和索引；保留用户暂存.python-version/README.zh-CN.md及train.py/utils/eval.py日志简化修改。未本地训练、未新增test。
+
+## 2026-11-10 日志输出简化
+
+按用户要求，`train.py` 移除 batch 进度条与动态 loss/lr 输出，每个 epoch 训练和当轮验证完成后仅打印一行汇总（loss、IoU、seg_acc、precision、coverage、longest、耗时）；未安排验证时仅汇总 loss 和耗时。`utils/eval.py` 移除独立验证/测试进度条。保留启动/结束信息、异常诊断和文件中的 batch 指标，不改训练、评估或 checkpoint 选择协议。
+
+验证：现有 `test_eval_metrics.py` 两项 CPU 测试通过，两个修改的 Python 文件编译及 `git diff --check` 通过；未启动实际训练或 CUDA 验证。本次修改 `train.py`、`utils/eval.py`、本文件；保留用户已暂存的 `.python-version`、`README.zh-CN.md`。下一步服务器同步后使用原命令，确认每轮单行汇总输出；研究实验待办沿用下文。
+
+## 当前研究执行点（2026-11-03）
 
 用户要求基于此前R1较好结果继续查顶会方法、参数化改进并给服务器脚本；已明确训练由独立服务器执行，本地只写代码/做必要正确性检查，不启动实际训练。原R1 Jaccard/precision的73%左右证据仍是seed37 val，不是test。原始145文件/8权重归档完整保留，未改动。
 
