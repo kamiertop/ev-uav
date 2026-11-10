@@ -23,32 +23,35 @@ class ExperimentConfigTest(unittest.TestCase):
     def test_boolean_flags_and_legacy_values(self):
         self.assertFalse(self.parse().test_after_train)
         self.assertTrue(self.parse('--test_after_train').test_after_train)
-        self.assertFalse(self.parse('--vis', 'False').vis)
+        self.assertFalse(self.parse('--eval', 'False').eval)
         self.assertFalse(self.parse('--no-use_coords').use_coords)
-        self.assertTrue(self.parse('--vis').vis)
+        self.assertTrue(self.parse('--eval').eval)
 
     def test_current_defaults_and_presets(self):
         cfg = self.parse()
         self.assertEqual((cfg.patch_attention, cfg.loss), ('sequence', 'stc'))
         self.assertEqual(set(args.EXPERIMENTS), {
-            'a0', 'attention_fix', 'a1', 'r1_event', 'r2_balanced', 'r3_term',
-            'a1_lovasz', 'a1_jaccard',
+            'a0', 'attention_fix', 'a1', 'r1_event', 'a1_jaccard',
             'r1_jaccard', 'r1_hardneg', 'r1_precision',
         })
 
-    def test_risk_overrides_and_separate_evaluation_bins(self):
-        cfg = self.parse('--risk_mode', 'event', '--experiment', 'r3_term',
-                         '--risk_bin_ms', '25', '--risk_beta', '0')
-        self.assertEqual(cfg.risk_mode, 'event')
-        self.assertEqual(cfg.risk_beta, 0)
-        self.assertEqual(cfg.risk_bin_ms, 25)
-        self.assertEqual(cfg.trajectory_bin_ms, 50)
-
-    def test_reject_invalid_risk_config(self):
-        for flag, value in (('--risk_weight', '-1'), ('--risk_beta', 'nan'),
-                            ('--risk_bin_ms', '0')):
+    def test_retired_routes_and_parameters_are_rejected(self):
+        for preset in ['r2_balanced', 'r3_term', 'a1_lovasz']:
             with patch('sys.stderr', new=io.StringIO()), self.assertRaises(SystemExit):
-                self.parse('--experiment', 'r3_term', flag, value)
+                self.parse('--experiment', preset)
+        for flag in ['--risk_mode', '--risk_beta', '--risk_bin_ms', '--sam_rho',
+                     '--sam_start_epoch', '--iou_mode', '--vis', '--save']:
+            with patch('sys.stderr', new=io.StringIO()), self.assertRaises(SystemExit):
+                self.parse(flag, '0')
+        cfg = self.parse('--experiment', 'r1_precision')
+        for key in ['risk_mode', 'risk_beta', 'risk_bin_ms', 'sam_rho', 'sam_start_epoch', 'iou_mode']:
+            self.assertFalse(hasattr(cfg, key))
+
+    def test_retained_weight_overrides_and_invalid_values(self):
+        self.assertEqual(self.parse('--experiment', 'r1_precision', '--risk_weight', '0.03').risk_weight, .03)
+        for value in ['-1', 'nan', 'inf']:
+            with patch('sys.stderr', new=io.StringIO()), self.assertRaises(SystemExit):
+                self.parse('--experiment', 'r1_precision', '--risk_weight', value)
 
 
 if __name__ == '__main__':

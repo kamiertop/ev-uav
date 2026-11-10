@@ -24,7 +24,6 @@ CANDIDATES = {
 def build_plan(root, runs, data, gpu, dry_run=False):
     plan = []
     for experiment, (suffix, best_iou, expected_sha256) in CANDIDATES.items():
-        rho = 0.0
         variant = experiment
         matches = [runs / f'train_r1p_{experiment}_w0.1_s37_{BATCH}_{suffix}']
         matches = [p for p in matches if p.is_dir()]
@@ -36,8 +35,7 @@ def build_plan(root, runs, data, gpu, dry_run=False):
                         max_events_num=700000, attention_backend='math',
                         prediction_thresh=0.9, early_stopping_patience=0,
                         test_after_train=False,
-                        loss='stc_r1_precision', risk_mode='event', risk_weight=0.1,
-                        iou_mode='jaccard', iou_weight=0.1,
+                        loss='stc_r1_precision', risk_weight=0.1, iou_weight=0.1,
                         hardneg_weight=0.03 if experiment == 'r1_precision' else 0.0)
         for key, value in expected.items():
             if cfg.get(key) != value:
@@ -63,13 +61,12 @@ def build_plan(root, runs, data, gpu, dry_run=False):
         for key in ['input_channel', 'whole_t', 'res', 'max_events_num', 'width',
                     'block_residual', 'block_reps', 'use_coords', 'patch_attention',
                     'attention_backend', 'pd_detT', 'correct_thresh', 'trajectory_bin_ms',
-                    'trajectory_correct_thresh', 'risk_mode', 'risk_weight', 'risk_beta',
-                    'risk_bin_ms', 'iou_mode', 'iou_weight', 'hardneg_weight',
-                    'hardneg_ratio', 'hardneg_min', 'sam_rho', 'sam_start_epoch']:
-            value = cfg.get(key, 0) if key in ['sam_rho', 'sam_start_epoch'] else cfg[key]
+                    'trajectory_correct_thresh', 'risk_weight', 'iou_weight', 'hardneg_weight',
+                    'hardneg_ratio', 'hardneg_min']:
+            value = cfg[key]
             command += ['--' + key] + ([str(v) for v in value] if isinstance(value, list) else [str(value)])
         plan.append(dict(variant=variant, experiment=experiment, seed=37, threshold=0.85,
-                         sam_rho=rho, run_dir=str(directory), checkpoint=str(checkpoint),
+                         run_dir=str(directory), checkpoint=str(checkpoint),
                          expected_checkpoint_sha256=expected_sha256,
                          command=command))
     return plan

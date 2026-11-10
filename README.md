@@ -309,14 +309,16 @@ If you reference or build upon this work, please acknowledge our paper as above.
 
 The code is based on [HAIS](https://github.com/hustvl/HAIS) and [spconv](https://github.com/traveller59/spconv).
 
-## Ablation experiments / 消融实验
+## Current research workflow
 
-Current workflow: [NEXT_STEPS.md](NEXT_STEPS.md). Training and validation commands: [TRAINING_COMMANDS.md](TRAINING_COMMANDS.md). Method survey: [ML_METHOD_SURVEY.md](ML_METHOD_SURVEY.md).
+The verified R1 combination achieves test IoU **73.22%**, foreground ACC **77.69%**, Pd **85.77%**, Fa **9.78e-6** (seed37, threshold0.85; one run, not a seed average).
+
+Start at [NEXT_STEPS.md](NEXT_STEPS.md). Use [TRAINING_COMMANDS.md](TRAINING_COMMANDS.md) for commands, [EXPERIMENT_RESULTS.md](EXPERIMENT_RESULTS.md) for evidence, and [ML_METHOD_SURVEY.md](ML_METHOD_SURVEY.md) for literature and the planned independent PACT reproduction. Exact frozen results and checkpoint identities are in [experiments/verified_r1.json](experiments/verified_r1.json).
+
+Maintained presets: `a0`, `attention_fix`, `a1`, `a1_jaccard`, `r1_event`, `r1_jaccard`, `r1_hardneg`, `r1_precision`. The four R1 presets retain the full component ablation. Default training remains A1+STC; select `--experiment r1_precision` explicitly for the main method.
 
 ```bash
-uv run python train.py --experiment r3_term --run_name r3_term_s37 \
-  --seed 37 --epochs 50 --train_workers 0 \
-  --early_stopping_patience 0 --no-test_after_train
+bash scripts/run_r1_precision.sh --gpu 0 --data-dir ../ev-uav-data --dry-run
 ```
 
-Presets: `a0`, `attention_fix`, `a1`, `r1_event`, `r2_balanced`, `r3_term`. Explicit flags override presets. Default training uses A1 with STC. Use `test.py --split val` during exploration; test-set evaluation follows configuration freeze.
+Training is run on the user's GPU server. Use validation data during development; freeze configurations before test evaluation. Raw logs and checkpoints are retained separately from Git.

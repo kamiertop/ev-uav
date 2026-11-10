@@ -1,0 +1,76 @@
+{
+  "archive": "r1_best_test_20261110_171111_49b623.tar.gz",
+  "archive_sha256": "1d543d835a445d04133d619e607312c22b170753e1a93b0e89eef2fb1858d7ac",
+  "weights_match_preserved_originals": true,
+  "training_configs_and_metrics_match_originals": true,
+  "per_sequence_counts_verified": true,
+  "results": [
+    {
+      "variant": "r1_jaccard",
+      "split": "test",
+      "seed": 37,
+      "threshold": 0.85,
+      "iou": 0.6853014230728149,
+      "seg_acc": 0.7186130285263062,
+      "pd": 0.8286151491966335,
+      "fa": 7.060275639850919e-06,
+      "precision": 0.9366432417632564,
+      "tp": 51314,
+      "fp": 3471,
+      "fn": 20093,
+      "run": "train_r1p_r1_jaccard_w0.1_s37_20261021_104437_461ed8_20261021_104716",
+      "checkpoint_sha256": "8a2498345d65d0271cd6a619d870e82f11d57a6ca8f8d90e5824550bb1baa6d3"
+    },
+    {
+      "variant": "r1_precision",
+      "split": "test",
+      "seed": 37,
+      "threshold": 0.85,
+      "iou": 0.7321544289588928,
+      "seg_acc": 0.776940643787384,
+      "pd": 0.8576893649579189,
+      "fa": 9.775077059742834e-06,
+      "precision": 0.9270138854077898,
+      "tp": 55479,
+      "fp": 4368,
+      "fn": 15928,
+      "run": "train_r1p_r1_precision_w0.1_s37_20261021_104437_461ed8_20261021_115309",
+      "checkpoint_sha256": "1a4ec27ac0135ae6f4e562724bd836e74bee6e69a6597e4bf52c6b2b6d3aea67"
+    }
+  ],
+  "preserved_archive": {
+    "path": "runs/preserved/r1_best_test_seed37_20261110.tar.gz",
+    "sha256": "341a11c6960d4cae75131a9377d7f323587971deb8065f08702b6ddd62d92d98",
+    "bytes": 10723782,
+    "files": 20
+  },
+  "training_protocol": {
+    "epochs": 50,
+    "seed": 37,
+    "batch_size": 1,
+    "max_events_num": 700000,
+    "attention_backend": "math",
+    "optim": "Adam",
+    "lr": 0.01,
+    "final_lr": 0.001,
+    "scheduler": "linear",
+    "early_stopping_patience": 0,
+    "test_after_train": false,
+    "checkpoint_selection": "maximum val IoU at threshold 0.9",
+    "test_threshold": 0.85
+  },
+  "best_experiment": "r1_precision",
+  "loss_weights": {
+    "risk_weight": 0.1,
+    "iou_weight": 0.1,
+    "hardneg_weight": 0.03,
+    "hardneg_ratio": 3.0,
+    "hardneg_min": 256
+  },
+  "evidence_limits": [
+    "Single seed, not a multiple-seed mean.",
+    "Historical tests were used during this research iteration; no claim of an untouched test set.",
+    "External paper values have not been independently reproduced under one evaluator.",
+    "CPU cleanup checks do not establish unchanged CUDA training trajectories."
+  ]
+}

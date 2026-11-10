@@ -19,10 +19,9 @@ from utils.run_manager import RunManager
 from utils.seed import set_seed
 from utils.training_checks import check_loss, check_gradients, check_tensors
 from utils.stcloss import STCLoss
-from utils.trajectory_risk import STCTrajectoryRiskLoss
+from utils.foreground_loss import STCForegroundLoss
 from utils.iou_loss import STCIoULoss
 from utils.r1_precision import STCR1PrecisionLoss
-from utils.sharpness import sam_perturbation, batch_stats_without_running_updates
 
 
 def build_optimizer(net, cfg):
@@ -89,7 +88,7 @@ def main():
     if args.cfg.loss == "stc":
         criterion = STCLoss(k=args.cfg.k, t=args.cfg.t, cfg=args.cfg).to(device)
     elif args.cfg.loss == "stc_risk":
-        criterion = STCTrajectoryRiskLoss(
+        criterion = STCForegroundLoss(
             STCLoss(k=args.cfg.k, t=args.cfg.t, cfg=args.cfg), args.cfg,
         ).to(device)
     elif args.cfg.loss == "stc_iou":
@@ -133,7 +132,6 @@ def main():
             components = {}
             stage = "forward"
             try:
-                sam_active = args.cfg.sam_rho > 0 and epoch >= args.cfg.sam_start_epoch
                 if args.cfg.diagnose_numerics:
                     check_tensors([("input_features", x.features), ("label", label)])
                 preds, voxel, auxiliary = net(x)
@@ -150,34 +148,7 @@ def main():
                 check_loss(loss)
                 stage = "backward"
                 loss.backward()
-                grad_norm = check_gradients(net.parameters(), 0.0 if sam_active else args.cfg.grad_clip_norm)
-                if sam_active:
-                    components["sam_first_grad_norm"] = grad_norm
-                    # Release first-pass graph references before the second sparse forward.
-                    loss = loss.detach()
-                    del preds, voxel, auxiliary
-                    stage = "sam_perturb"
-                    with sam_perturbation(net.parameters(), args.cfg.sam_rho) as sam_stats:
-                        components.update(sam_stats)
-                        optimizer.zero_grad(set_to_none=True)
-                        stage = "sam_forward"
-                        with batch_stats_without_running_updates(net):
-                            sam_preds, sam_voxel, sam_auxiliary = net(x)
-                            stage = "sam_loss"
-                            if args.cfg.loss == "stc":
-                                sam_loss = criterion(sam_voxel, p2v_map, sam_preds, label)
-                            else:
-                                sam_loss, _ = criterion(
-                                    sam_voxel, p2v_map, sam_preds, label, sam_auxiliary,
-                                    ev_locs, instance_ids,
-                                )
-                            check_loss(sam_loss)
-                            components["sam_perturbed_loss"] = sam_loss.detach()
-                            stage = "sam_backward"
-                            sam_loss.backward()
-                        grad_norm = check_gradients(net.parameters(), args.cfg.grad_clip_norm)
-                        del sam_preds, sam_voxel, sam_auxiliary, sam_loss
-                    components["sam_active"] = 1
+                grad_norm = check_gradients(net.parameters(), args.cfg.grad_clip_norm)
                 stage = "optimizer_step"
                 optimizer.step()
                 if args.cfg.diagnose_numerics:
@@ -313,8 +284,6 @@ def main():
         early_stopped=(epoch + 1 < args.cfg.epochs),
         validation_rounds=validation_rounds,
         best_iou_epoch=best_iou_epoch,
-        best_iou_sam_active=(args.cfg.sam_rho > 0 and best_iou_epoch is not None
-                             and best_iou_epoch >= args.cfg.sam_start_epoch),
     )
     print(f"[train] Done. Best loss={best_loss:.4f}, best IoU={best_iou:.4f}")
 

@@ -11,7 +11,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from utils.iou_loss import EventIoULoss
-from utils.trajectory_risk import STCTrajectoryRiskLoss
+from utils.foreground_loss import STCForegroundLoss
 
 
 class HardBackgroundLoss(nn.Module):
@@ -56,15 +56,13 @@ class HardBackgroundLoss(nn.Module):
 class STCR1PrecisionLoss(nn.Module):
     def __init__(self, stc, cfg):
         super().__init__()
-        if cfg.risk_mode != "event":
-            raise ValueError("R1 precision controls require risk_mode=event")
         for name in ("iou_weight", "hardneg_weight"):
             value = getattr(cfg, name)
             if not math.isfinite(value) or value < 0:
                 raise ValueError(f"{name} must be finite and nonnegative")
-        self.base = STCTrajectoryRiskLoss(stc, cfg)
+        self.base = STCForegroundLoss(stc, cfg)
         self.iou_weight, self.negative_weight = cfg.iou_weight, cfg.hardneg_weight
-        self.overlap = EventIoULoss("jaccard")
+        self.overlap = EventIoULoss()
         self.background = HardBackgroundLoss(cfg.hardneg_ratio, cfg.hardneg_min)
 
     def forward(self, voxel, p2v_map, predictions, labels, auxiliary,

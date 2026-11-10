@@ -9,6 +9,7 @@ Usage::
 
 import argparse
 import math
+from typing import Any
 
 def _boolean(value):
     if isinstance(value, bool):
@@ -19,23 +20,19 @@ def _boolean(value):
         return False
     raise argparse.ArgumentTypeError("expected true or false")
 
-from typing import Any
 
 EXPERIMENTS = {
     "a0": dict(patch_attention="legacy", loss="stc"),
-    "a1": dict(patch_attention="sequence", loss="stc"),
-    "a1_lovasz": dict(patch_attention="sequence", loss="stc_iou", iou_mode="lovasz"),
-    "a1_jaccard": dict(patch_attention="sequence", loss="stc_iou", iou_mode="jaccard"),
-    "r1_event": dict(patch_attention="sequence", loss="stc_risk", risk_mode="event"),
-    "r1_jaccard": dict(patch_attention="sequence", loss="stc_r1_precision", risk_mode="event",
-                       iou_mode="jaccard", iou_weight=0.1, hardneg_weight=0.0),
-    "r1_hardneg": dict(patch_attention="sequence", loss="stc_r1_precision", risk_mode="event",
-                       iou_mode="jaccard", iou_weight=0.0, hardneg_weight=0.03),
-    "r1_precision": dict(patch_attention="sequence", loss="stc_r1_precision", risk_mode="event",
-                         iou_mode="jaccard", iou_weight=0.1, hardneg_weight=0.03),
-    "r2_balanced": dict(patch_attention="sequence", loss="stc_risk", risk_mode="balanced"),
-    "r3_term": dict(patch_attention="sequence", loss="stc_risk", risk_mode="term"),
     "attention_fix": dict(patch_attention="corrected", loss="stc"),
+    "a1": dict(patch_attention="sequence", loss="stc"),
+    "a1_jaccard": dict(patch_attention="sequence", loss="stc_iou"),
+    "r1_event": dict(patch_attention="sequence", loss="stc_risk"),
+    "r1_jaccard": dict(patch_attention="sequence", loss="stc_r1_precision",
+                       iou_weight=0.1, hardneg_weight=0.0),
+    "r1_hardneg": dict(patch_attention="sequence", loss="stc_r1_precision",
+                      iou_weight=0.0, hardneg_weight=0.03),
+    "r1_precision": dict(patch_attention="sequence", loss="stc_r1_precision",
+                        iou_weight=0.1, hardneg_weight=0.03),
 }
 
 # Module-level singleton — populated by parse()
@@ -98,10 +95,6 @@ def parse(extra: list[tuple[str, dict[str, Any]]] | None = None) -> argparse.Nam
                         help="trace backward NaNs and check inputs, outputs, parameters and buffers; slow")
     parser.add_argument("--grad_clip_norm", default=0.0, type=float,
                         help="gradient L2 norm cap; 0 disables clipping, finite checks always enabled")
-    parser.add_argument("--sam_rho", default=0.0, type=float,
-                        help="SAM perturbation radius; 0 exactly retains ordinary optimizer steps")
-    parser.add_argument("--sam_start_epoch", default=0, type=int,
-                        help="zero-based epoch to enable SAM; default 0, total epochs unchanged")
     parser.add_argument("--epochs", default=50, type=int)
     parser.add_argument("--lr", default=0.01, type=float,
                         help="initial learning rate")
@@ -135,8 +128,7 @@ def parse(extra: list[tuple[str, dict[str, Any]]] | None = None) -> argparse.Nam
         help="evaluate the held-out test split after model selection",
     )
 
-    # Shared trajectory evaluation bins.
-    parser.add_argument("--iou_mode", default="lovasz", choices=["lovasz", "jaccard"])
+    # Jaccard and hard-background supervision; trajectory bins are metrics only.
     parser.add_argument("--iou_weight", default=0.1, type=float)
     parser.add_argument("--hardneg_weight", default=0.03, type=float)
     parser.add_argument("--hardneg_ratio", default=3.0, type=float,
@@ -145,19 +137,12 @@ def parse(extra: list[tuple[str, dict[str, Any]]] | None = None) -> argparse.Nam
                         help="minimum selected background events, capped by availability")
     parser.add_argument("--trajectory_bin_ms", default=50.0, type=float)
 
-    # Risk ablations: same A1 backbone, no additional trainable heads.
-    parser.add_argument("--risk_mode", default="term", choices=["event", "balanced", "term"])
+    # Foreground event BCE; no instance/time-bin risk variants.
     parser.add_argument("--risk_weight", default=0.1, type=float)
-    parser.add_argument("--risk_beta", default=1.0, type=float,
-                        help="nonnegative tilt; 0 uses the balanced bin mean")
-    parser.add_argument("--risk_bin_ms", default=50.0, type=float,
-                        help="training-only risk bins; does not change evaluation bins")
 
     # ── evaluation ──────────────────────────────────────────────────
     parser.add_argument("--eval", default=True, type=_boolean, nargs="?", const=True)
     parser.add_argument("--no-eval", dest="eval", action="store_false")
-    parser.add_argument("--vis", default=False, type=_boolean, nargs="?", const=True)
-    parser.add_argument("--no-vis", dest="vis", action="store_false")
     parser.add_argument("--roc", default=True, type=_boolean, nargs="?", const=True)
     parser.add_argument("--no-roc", dest="roc", action="store_false")
     parser.add_argument("--pd_detT", default=50, type=int,
@@ -168,8 +153,6 @@ def parse(extra: list[tuple[str, dict[str, Any]]] | None = None) -> argparse.Nam
         help="fraction of GT events recovered for a trajectory bin to count",
     )
     parser.add_argument("--prediction_thresh", default=0.9, type=float)
-    parser.add_argument("--save", default=True, type=_boolean, nargs="?", const=True)
-    parser.add_argument("--no-save", dest="save", action="store_false")
 
     if extra:
         for flag, kwargs in extra:
@@ -179,23 +162,15 @@ def parse(extra: list[tuple[str, dict[str, Any]]] | None = None) -> argparse.Nam
     if selected.experiment:
         parser.set_defaults(**EXPERIMENTS[selected.experiment])
     cfg = parser.parse_args()
-    if not math.isfinite(cfg.sam_rho) or cfg.sam_rho < 0:
-        parser.error("--sam_rho must be finite and nonnegative")
-    if cfg.sam_start_epoch < 0 or (cfg.sam_rho > 0 and cfg.sam_start_epoch >= cfg.epochs):
-        parser.error("SAM start epoch must be nonnegative and, when enabled, less than epochs")
     if cfg.loss in {"stc_iou", "stc_r1_precision"} and (not math.isfinite(cfg.iou_weight) or cfg.iou_weight < 0):
         parser.error("--iou_weight must be finite and nonnegative")
     if cfg.loss == "stc_r1_precision":
-        if cfg.risk_mode != "event" or cfg.iou_mode != "jaccard":
-            parser.error("stc_r1_precision requires --risk_mode event --iou_mode jaccard")
         if not math.isfinite(cfg.hardneg_weight) or cfg.hardneg_weight < 0:
             parser.error("--hardneg_weight must be finite and nonnegative")
         if not math.isfinite(cfg.hardneg_ratio) or cfg.hardneg_ratio <= 0 or cfg.hardneg_min < 1:
             parser.error("--hardneg_ratio must be finite and positive; --hardneg_min must be positive")
     if cfg.loss in {"stc_risk", "stc_r1_precision"}:
-        for name in ("risk_weight", "risk_beta", "risk_bin_ms"):
-            value = getattr(cfg, name)
-            if not math.isfinite(value) or value < 0 or (name == "risk_bin_ms" and value == 0):
-                parser.error(f"invalid --{name}: must be finite and {'positive' if name == 'risk_bin_ms' else 'nonnegative'}")
+        if not math.isfinite(cfg.risk_weight) or cfg.risk_weight < 0:
+            parser.error("--risk_weight must be finite and nonnegative")
     globals()["cfg"] = cfg
     return cfg

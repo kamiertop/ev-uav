@@ -1,8 +1,6 @@
-"""Event-level binary IoU surrogates, averaged over samples.
+"""Soft Jaccard on hard event labels, averaged equally over samples.
 
-Lovasz hinge: Berman et al., CVPR 2018 (binary formulation).
-Soft Jaccard uses hard GT labels; it does not claim the soft-label JML extension.
-Both include background events and use event logits, not voxel counts.
+Includes background events and uses event logits, not voxel counts.
 """
 
 import math
@@ -10,21 +8,6 @@ import math
 import torch
 from torch import nn
 from torch.nn import functional as F
-
-
-def lovasz_hinge(logits, labels):
-    """Binary Lovasz extension of the Jaccard set loss on one sample."""
-    if logits.numel() == 0:
-        return logits.sum()
-    errors = 1 - logits * (2 * labels - 1)
-    errors, order = torch.sort(errors, descending=True, stable=True)
-    sorted_gt = labels[order]
-    positives = sorted_gt.sum()
-    intersection = positives - sorted_gt.cumsum(0)
-    union = positives + (1 - sorted_gt).cumsum(0)
-    jaccard = 1 - intersection / union
-    gradient = torch.cat((jaccard[:1], jaccard[1:] - jaccard[:-1]))
-    return torch.dot(F.relu(errors), gradient)
 
 
 def soft_jaccard(logits, labels):
@@ -40,12 +23,6 @@ def soft_jaccard(logits, labels):
 
 
 class EventIoULoss(nn.Module):
-    def __init__(self, mode):
-        super().__init__()
-        if mode not in {"lovasz", "jaccard"}:
-            raise ValueError(f"Unknown IoU surrogate: {mode}")
-        self.mode = mode
-
     def forward(self, logits, labels, locations):
         logits, labels = logits.reshape(-1), labels.reshape(-1)
         if locations.shape != (logits.numel(), 4) or labels.shape != logits.shape:
@@ -56,10 +33,9 @@ class EventIoULoss(nn.Module):
         if logits.numel() == 0:
             return logits.sum()
         losses = []
-        function = lovasz_hinge if self.mode == "lovasz" else soft_jaccard
         for sample in torch.unique(locations[:, 0], sorted=True):
             mask = locations[:, 0] == sample
-            losses.append(function(logits[mask], labels[mask]))
+            losses.append(soft_jaccard(logits[mask], labels[mask]))
         return torch.stack(losses).mean()
 
 
@@ -70,7 +46,7 @@ class STCIoULoss(nn.Module):
             raise ValueError("iou_weight must be finite and nonnegative")
         self.stc = stc
         self.weight = cfg.iou_weight
-        self.surrogate = EventIoULoss(cfg.iou_mode)
+        self.surrogate = EventIoULoss()
 
     def forward(self, voxel, p2v_map, predictions, labels, auxiliary,
                 locations, instance_ids):

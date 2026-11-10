@@ -1,7 +1,6 @@
-"""Controlled A1 / Lovasz / soft-Jaccard runs. Never evaluates the test split."""
+"""Controlled baseline and R1 ablations. Never evaluates the test split."""
 import argparse
 import hashlib
-import math
 from datetime import datetime
 import json
 import os
@@ -21,73 +20,44 @@ sys.path.insert(0, str(PROJECT_ROOT))
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--gpu', default='0')
-    parser.add_argument('--suite', choices=['iou', 'r1_precision', 'r1_sam'], default='iou')
     parser.add_argument('--experiments', nargs='+', default=None,
-                        help='run only these members of the selected suite; fresh training, not checkpoint resume')
+                        help='run only these retained presets; fresh training, not checkpoint resume')
     parser.add_argument('--data-dir', default='../ev-uav-data')
     parser.add_argument('--seeds', nargs='+', type=int, default=None)
-    parser.add_argument('--weight', type=float, choices=[0.03, 0.1], default=0.1)
-    parser.add_argument('--sam-rhos', nargs='+', type=float, default=None,
-                        help='SAM radii; 0 is the unchanged optimizer control')
-    parser.add_argument('--sam-start-epoch', type=int, default=0)
     parser.add_argument('--dry-run', action='store_true')
     options = parser.parse_args()
-    r1_suite = options.suite != 'iou'
     if options.seeds is None:
-        options.seeds = [37] if r1_suite else [37, 13, 73]
-    if options.sam_rhos is None:
-        options.sam_rhos = [0.0, 0.05] if options.suite == 'r1_sam' else [0.0]
-    if (any(not math.isfinite(rho) or rho < 0 for rho in options.sam_rhos)
-            or len(set(options.sam_rhos)) != len(options.sam_rhos)):
-        parser.error('SAM radii must be unique, finite, nonnegative')
-    if not 0 <= options.sam_start_epoch < 50:
-        parser.error('--sam-start-epoch must be in [0, 49]')
+        options.seeds = [37]
     if len(set(options.seeds)) != len(options.seeds):
         parser.error('duplicate seeds')
     os.chdir(PROJECT_ROOT)
     tag = datetime.now().strftime('%Y%m%d_%H%M%S') + '_' + uuid.uuid4().hex[:6]
-    suite_name = options.suite if r1_suite else 'iou_ablation'
-    bundle = Path('runs/logs') / f'{suite_name}_{tag}'
+    bundle = Path('runs/logs') / f'r1_ablation_{tag}'
     common = ['--data_dir', options.data_dir, '--gpu', options.gpu,
               '--train_workers', '0', '--batch_size', '1', '--attention_backend', 'math']
     planned = []
-    experiments = (['r1_event', 'r1_jaccard', 'r1_hardneg', 'r1_precision']
-                   if r1_suite else ['a1', 'a1_lovasz', 'a1_jaccard'])
-    if options.suite == 'r1_sam':
-        experiments = ['r1_jaccard', 'r1_precision']
+    allowed = {'a0', 'attention_fix', 'a1', 'a1_jaccard',
+               'r1_event', 'r1_jaccard', 'r1_hardneg', 'r1_precision'}
+    experiments = ['r1_event', 'r1_jaccard', 'r1_hardneg', 'r1_precision']
     if options.experiments is not None:
         if len(set(options.experiments)) != len(options.experiments):
             parser.error('duplicate experiments')
-        invalid = set(options.experiments) - set(experiments)
+        invalid = set(options.experiments) - allowed
         if invalid:
-            parser.error(f'experiments outside the selected suite: {sorted(invalid)}')
+            parser.error(f'unsupported experiments: {sorted(invalid)}')
         experiments = options.experiments
-    thresholds = (['0.8', '0.85', '0.9', '0.95', '0.97', '0.98']
-                  if r1_suite else ['0.7', '0.8', '0.85', '0.9', '0.95'])
+    thresholds = ['0.8', '0.85', '0.9', '0.95', '0.97', '0.98']
     for seed in options.seeds:
         for experiment in experiments:
-            for rho in options.sam_rhos:
-                run_prefix = 'r1p' if r1_suite else 'iou'
-                variant = experiment if rho == 0 else f'{experiment}_sam{rho:g}_e{options.sam_start_epoch}'
-                name = f'{run_prefix}_{variant}_w{options.weight}_s{seed}_{tag}'
-                weight = options.weight
-                negative = 0.0
-                if r1_suite:
-                    weight = options.weight if experiment in ['r1_jaccard', 'r1_precision'] else 0.0
-                    negative = 0.03 if experiment in ['r1_hardneg', 'r1_precision'] else 0.0
-                command = [sys.executable, 'train.py', '--experiment', experiment, *common,
-                           '--run_name', name, '--seed', str(seed), '--epochs', '50',
-                           '--max_events_num', '700000', '--optim', 'Adam', '--lr', '0.01',
-                           '--final_lr', '0.001', '--scheduler', 'linear',
-                           '--prediction_thresh', '0.9', '--iou_weight', str(weight),
-                           '--val_start_epoch', '0', '--val_interval', '1',
-                           '--early_stopping_patience', '0', '--no-test_after_train',
-                           '--sam_rho', str(rho), '--sam_start_epoch', str(options.sam_start_epoch if rho else 0)]
-                if r1_suite:
-                    command += ['--risk_mode', 'event', '--risk_weight', '0.1',
-                                '--iou_mode', 'jaccard', '--hardneg_weight', str(negative),
-                                '--hardneg_ratio', '3', '--hardneg_min', '256']
-                planned.append((seed, variant, name, command))
+            name = f'r1p_{experiment}_w0.1_s{seed}_{tag}'
+            command = [sys.executable, 'train.py', '--experiment', experiment, *common,
+                       '--run_name', name, '--seed', str(seed), '--epochs', '50',
+                       '--max_events_num', '700000', '--optim', 'Adam', '--lr', '0.01',
+                       '--final_lr', '0.001', '--scheduler', 'linear',
+                       '--prediction_thresh', '0.9', '--val_start_epoch', '0',
+                       '--val_interval', '1', '--early_stopping_patience', '0',
+                       '--no-test_after_train']
+            planned.append((seed, experiment, name, command))
     if options.dry_run:
         for seed, experiment, name, command in planned:
             print(shlex.join(command))
@@ -182,14 +152,12 @@ def main():
     completed = []
     # One epoch checks only execution/memory; formal runs still start from scratch
     # with the original 50-epoch learning-rate schedule.
-    for seed, experiment, name, command in planned[:len(experiments) * len(options.sam_rhos)]:
-        rho = float(command[command.index('--sam_rho') + 1])
-        if experiment in ['a1', 'r1_event'] or (options.suite == 'r1_sam' and rho == 0):
+    for seed, experiment, name, command in planned[:len(experiments)]:
+        if experiment in ['a0', 'attention_fix', 'a1', 'r1_event']:
             continue
         smoke = command.copy()
         smoke[smoke.index('--epochs') + 1] = '1'
         smoke[smoke.index('--run_name') + 1] = 'smoke_' + name
-        smoke[smoke.index('--sam_start_epoch') + 1] = '0'
         run(smoke, bundle / f'{experiment}_smoke.log')
     for seed, experiment, name, command in planned:
         log = bundle / f'{experiment}_s{seed}_train.log'
@@ -205,18 +173,16 @@ def main():
         preset = command[command.index('--experiment') + 1]
         if (config['run_name'] != name or config['experiment'] != preset
                 or config['seed'] != seed or rows[-1].get('validation_rounds') != 50
-                or rows[-1].get('early_stopped') is not False
-                or config['sam_rho'] != float(command[command.index('--sam_rho') + 1])):
+                or rows[-1].get('early_stopped') is not False):
             raise RuntimeError(f'Incomplete or mismatched training run: {directory}')
         checkpoint = directory / 'checkpoints' / f'best_iou_seed{seed}.pt'
         if not checkpoint.is_file():
             raise RuntimeError(f'Missing checkpoint: {checkpoint}')
         completed.append(directory)
         record(run_dir=str(directory), seed=seed, experiment=preset, variant=experiment,
-               sam_rho=config['sam_rho'], checkpoint=str(checkpoint))
+               checkpoint=str(checkpoint))
         evaluation_options = []
-        for key in ['risk_mode', 'risk_weight', 'iou_mode', 'iou_weight',
-                    'hardneg_weight', 'hardneg_ratio', 'hardneg_min', 'sam_rho', 'sam_start_epoch']:
+        for key in ['risk_weight', 'iou_weight', 'hardneg_weight', 'hardneg_ratio', 'hardneg_min']:
             evaluation_options += ['--' + key, str(config[key])]
         for threshold in thresholds:
             stem = f'{experiment}_s{seed}_t{threshold}'

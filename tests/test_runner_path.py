@@ -22,7 +22,7 @@ class RunnerImportPathTest(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as directory:
             subprocess.run([sys.executable, '-c', probe,
-                            str(root / 'scripts/run_iou_ablation.py'), str(root)],
+                            str(root / 'scripts/run_ablation.py'), str(root)],
                            cwd=directory, check=True, capture_output=True, text=True)
 
 

@@ -10,7 +10,7 @@ from torch.nn import functional as F
 
 from utils import args
 from utils.r1_precision import HardBackgroundLoss, STCR1PrecisionLoss
-from utils.trajectory_risk import STCTrajectoryRiskLoss
+from utils.foreground_loss import STCForegroundLoss
 from utils.iou_loss import EventIoULoss
 
 
@@ -20,7 +20,7 @@ class StubSTC(nn.Module):
 
 
 def config(**changes):
-    values = dict(risk_mode='event', risk_weight=.1, risk_beta=1, risk_bin_ms=50,
+    values = dict(risk_weight=.1,
                   iou_weight=.1, hardneg_weight=.03, hardneg_ratio=1., hardneg_min=1)
     values.update(changes)
     return Namespace(**values)
@@ -86,8 +86,8 @@ class R1PrecisionTest(unittest.TestCase):
         inputs = (None, mapping, logits.sigmoid(), labels,
                   {'segmentation_logits': logits}, locations, ids)
         cfg = config()
-        base, _ = STCTrajectoryRiskLoss(StubSTC(), cfg)(*inputs)
-        overlap = EventIoULoss('jaccard')(logits[mapping], labels, locations)
+        base, _ = STCForegroundLoss(StubSTC(), cfg)(*inputs)
+        overlap = EventIoULoss()(logits[mapping], labels, locations)
         negative, _ = HardBackgroundLoss(1, 1)(logits[mapping], labels, locations)
         loss, stats = STCR1PrecisionLoss(StubSTC(), cfg)(*inputs)
         torch.testing.assert_close(loss, base + .1 * overlap + .03 * negative)
@@ -108,7 +108,7 @@ class R1PrecisionTest(unittest.TestCase):
         for preset, iou, neg in [('r1_jaccard', .1, 0), ('r1_hardneg', 0, .03), ('r1_precision', .1, .03)]:
             with patch.object(sys, 'argv', ['train.py', '--experiment', preset]):
                 cfg = args.parse()
-            self.assertEqual((cfg.iou_weight, cfg.hardneg_weight, cfg.risk_mode), (iou, neg, 'event'))
+            self.assertEqual((cfg.iou_weight, cfg.hardneg_weight), (iou, neg))
         for flag, value in [('--hardneg_weight', '-1'), ('--hardneg_ratio', 'nan'),
                             ('--hardneg_min', '0'), ('--risk_weight', '-1'),
                             ('--risk_mode', 'term'), ('--iou_mode', 'lovasz')]:
