@@ -321,3 +321,76 @@ SAM对Jaccard：IoU−2.11pp、ACC−2.50pp、Pd−7.71pp，Fa下降24.6%；只�
 本轮无SAM基线@.9由10月21日Jaccard73.21降至65.94（−7.27pp），组合73.05降至64.26（−8.79pp）；不能把这些跨批次下降归到SAM。两批data_manifest完全一致（训练名称/大小、验证另有内容SHA256），模型/损失/评估源码哈希一致，新增变化为SAM训练分支、参数/runner/测试；rho0未进入新增训练分支。尚未定位漂移原因，不断言是代码回归或CUDA非确定性。旧最佳结果与权重继续保留，不被新基线覆盖。
 
 val_015旧→新无SAM FP：Jaccard207→5715，组合870→5489，是明显漂移来源。优先核验旧最佳checkpoint在当前服务器、同val阈值下能否恢复旧数字，区分重训轨迹差异与评估/权重身份问题；无需重训即可检查。此前尚未终评的旧最佳Jaccard@.85及组合@.85可以预先冻结后进行test，检验验证收益是否转移；不建议用test救选本轮SAM，不扫描test阈值或混用不同模型指标。当前未执行任何新推理或训练。
+
+## 16. SAM固定阈值测试结果（2026-11-10）
+
+用户按冻结计划完成test，原包 `r1_sam_test_20261110_165034_378f48.tar.gz`，SHA256 `5dfb16637e38f40806a911d393c0e8847a7584b2d871c4a3cab25d8c5075af13`。解压至 `runs/imported_r1_sam_test_20261110_165034_378f48/`，19个文件；原包保留。四份JSON/日志、summary.csv、冻结计划及各组训练config/metrics齐全。训练config/metrics逐字节匹配前次训练包；所有测试均seed37、math、test@.9、对应本批best_iou权重，未扫test阈值。24条序列计数加总、2074586事件/71407前景及全局IoU复算一致。计划记录四份checkpoint SHA256，但包内没有权重本体，不能独立重新计算其哈希。无新的本地推理或训练。
+
+### 16.1 四核心指标（全部test，同阈值.9）
+
+| 方案 | IoU% | ACC% | Pd% | Fa | precision% | FP | FN |
+|---|---|---|---|---|---|---|---|
+| R1+Jaccard | 58.21 | 66.81 | 80.28 | 2.68e-05 | 81.88 | 10556 | 23697 |
+| R1+Jaccard+SAM | **62.22** | 66.12 | 74.27 | **1.17e-05** | **91.33** | **4481** | 24191 |
+| R1+两项组合 | 55.03 | 65.27 | 75.61 | 1.52e-05 | 77.81 | 13291 | 24801 |
+| R1+两项组合+SAM | 53.75 | 63.97 | 77.96 | 3.51e-05 | 77.10 | 13564 | 25731 |
+
+Jaccard加SAM：IoU+4.01pp、ACC−.69pp、Pd−6.01pp、Fa下降56.4%；FP减少6075（57.6%），FN增加494。测试集IoU表现与val的−2.11pp方向相反，修正“仅据val认为SAM没有任何用途”的过强外推：本次Jaccard+SAM表现为更少误检、较低召回，不是四指标全面提升或普适泛化证据。其trajectory coverage .7220→.6308、longest .5969→.5262也下降。
+
+组合加SAM：IoU−1.27pp、ACC−1.30pp、Pd+2.35pp、Fa增加130.4%，FP增加273、FN增加930，未形成主指标收益。Pd与ACC分别衡量时间窗/事件层，不要求同向；不能混不同方案的最高数值。
+
+### 16.2 序列诊断与边界
+
+Jaccard+SAM只在8/24序列IoU提高，等权macro .6666→.6475，与全局事件IoU方向不同。test_022 FP4637→1651、test_023 FP4489→1846，两条合计减少5629，占全局FP减少6075的92.7%。全局收益主要由困难背景误检减少驱动，不等于所有场景普遍改善。组合+SAM虽改善13/24序列、macro .6221→.6433，且test_008 FP8078→1096，但test_022 FP2379→5451、test_023 FP2432→6564，抵消收益。仅描述错误分布，不据此针对具体test序列加规则。
+
+当前SAM测试最佳IoU62.22%，未超过历史A1+Jaccard seed13 test66.61%（不同seed/批次，不能当严格配对）。10月21日约73%仍为另一批val结果，本次没有测试那两份旧最佳权重，不撤销或覆盖它们。用户偏好单seed开发，本轮如实记录成功与取舍；不根据本轮test继续扫rho、阈值或选epoch。下一步如需检验此前最好模型，应冻结旧Jaccard/组合@.85后终评，或回到val核验旧权重及跨批次基线漂移；未擅自安排新训练或测试。
+
+数字与证据索引在 `results/r1_sam_test_20261110/`（all_results.csv、provenance.json、raw_file_checksums.json）。本轮只新增分析产物并更新本文件/NEXT_STEPS.md，原日志/权重/源码未改，未提交或推送。
+
+## 17. 全目录记录排名与论文比较（2026-11-10）
+
+本次重新扫描runs内独立评估JSON、metrics.jsonl中的test_*记录、10月19日终评文本，以及根目录6个结果压缩包；对run/split/seed/阈值去重后共120条独立评估：test27条（当前维护路线19、旧路线/历史8），val93条。根目录包没有发现本地已展开记录之外的新评估；所有epoch级val另行检查，不与独立终评混排。旧文档62.30%缺独立原始终评身份，未作为新增原始证据。原始日志与包未改。全表/证据来源/归档SHA256与分析代码保存在results/all_records_20261110/；results被Git忽略，此次文档更新未提交推送。
+
+### 17.1 测试集最佳操作点（每行来自同一权重/阈值）
+
+| 用途/方案 | seed | 阈值 | IoU% | ACC% | Pd% | Fa |
+|---|---|---|---|---|---|---|
+| IoU最高：A1+Jaccard | 13 | .9 | **66.6136** | 72.0364 | 81.2357 | 1.145652e-05 |
+| IoU接近且ACC更高：原R1 event | 37 | .95 | 65.97 | 74.32 | 81.01 | 1.88483e-05 |
+| 低Fa候选：A1+Jaccard | 37 | .9 | 62.7305 | 64.3662 | 77.7927 | 2.956714e-06 |
+| ACC/Pd各自最高（同一run）：原R1 event | 13 | .95 | 41.08 | **79.19** | **88.29** | 3.22581e-05 |
+| 当前维护路线Fa最低：A1+Jaccard | 73 | .9 | 39.4446 | 63.6128 | 74.7513 | **2.705842e-06** |
+| SAM最佳：R1+Jaccard+SAM | 37 | .9 | 62.2180 | 66.1224 | 74.2731 | 1.167753e-05 |
+
+若将已废弃路线也计算在内，全目录test最低Fa为旧a4_full_s37（20260902_162208）的7.794974e-07，但其IoU48.13、ACC48.35、Pd64.25，不是综合最好方案，不恢复该路线。只看Fa没有唯一最佳模型：不预测任何目标即可令虚警极低，必须同时考察召回与IoU。以上排名是已观察记录的事后总结，不当作预先指定模型选择或多种子方法均值。
+
+IoU冠军原始证据：runs/logs/iou_test_20261020_221519_00db35/a1_jaccard_s13.json；权重run=train_iou_a1_jaccard_w0.1_s13_20261020_163642_2d5b7c_20261020_192114，best_iou_seed13.pt，iou_weight=.1。原R1 s37证据：runs/logs/final_test_math_20261019_182010.log，run=train_r1_event_s37_fixed50_math_20261019_142853，best_iou_seed37.pt，risk_weight=.1。后者终评文本仅4位小数，保留原打印精度，不伪造额外有效数字。当前SAM最好操作点被历史A1+Jaccard s13四核心指标同时超过，不能因最新一轮就替换历史最佳。
+
+三种子完整批次中，10月20日A1@.85 test平均IoU60.91±4.61个百分点，高于该批Jaccard@.9的56.26±14.69；10月19日A1@.8为56.25±9.36，R1@.95为50.76±13.33。用户可继续单种子开发，但单次66.61不是方法均值，不能隐去其他seed。
+
+验证集最高仍为10月21日R1+Jaccard s37@.85：73.31/75.24/78.79/Fa3.58e-06；组合@.85：73.18/76.71/82.36/4.76e-06；组合@.8：73.04/77.66/83.70/6.04e-06。该批旧最佳权重尚未test。不能把val73%与下列论文test直接对比。
+
+### 17.2 论文原表复核与数值比较
+
+| 作者报告的EV-UAV结果 | IoU% | ACC% | Pd% | Fa（绝对值） |
+|---|---|---|---|---|
+| EV-SpSegNet，ICCV2025 | 55.18 | 65.02 | 77.53 | 1.63e-04 |
+| SpTopoNet，CVPR2026 | 66.62 | 74.43 | 83.36 | 1.29e-04 |
+| PACT，作者仓库标注ECCV2026 | 75.90 | 80.05 | 91.84 | 7.60e-05 |
+| PointEvent，2026-09预印本 | 75.56 | 81.61 | 91.75 | 1.20e-05 |
+
+来源：EV-SpSegNet [CVF原文](https://openaccess.thecvf.com/content/ICCV2025/papers/Chen_Event-based_Tiny_Object_Detection_A_Benchmark_Dataset_and_Baseline_ICCV_2025_paper.pdf)；SpTopoNet [CVF官方页](https://openaccess.thecvf.com/content/CVPR2026/html/He_Towards_Persistence_Learning_Topological_Constraints_for_Event-based_Small_Object_Detection_CVPR_2026_paper.html)及本地原PDF第7页Table1（/usr/bin/pdftotext重新提取核对）；PACT [原文Table1](https://arxiv.org/html/2606.22378v1)和[作者仓库](https://github.com/fulongcai/PACT)；PointEvent [原文Table1](https://arxiv.org/html/2609.20066v1)。论文Fa列单位均为10^-4，必须先转换；PointEvent的0.12是1.2e-05，不是1.2e-06。PACT录用身份本次仍以作者仓库说明为据，未另核对官方录用目录。
+
+A1+Jaccard s13与SpTopoNet：IoU只差.00643个百分点（66.61357 vs66.62），ACC低2.39pp、Pd低2.12pp，Fa数值低91.12%（约11.26倍差距）。这是接近相同IoU且明显低Fa的值得报告的操作点，不能因召回不足说全面领先。原R1 s37相对SpTopoNet：IoU−.65pp、ACC−.11pp、Pd−2.35pp，Fa数值低85.39%，也是有竞争力的另一取舍。
+
+A1+Jaccard s13的Fa相对EV-SpSegNet/PACT/PointEvent报告值分别低92.97%/84.93%/4.53%；IoU则分别+11.43/−9.29/−8.95pp。与PointEvent的Fa仅略低、原表经过四舍五入，不能夸大为显著优势。Fa极低的s37/s73并不消除IoU/召回差距。论文尚未本地统一复现，以上均为跨实验报告值比较。
+
+### 17.3 新发现的Fa公开实现差异
+
+本次再次只读核对本地../EV-UAV/utils/eval.py与本项目utils/eval.py，Fa都是每个50ms时间窗将全部GT背景误检事件投影后，统计一次8连通域，除以像素数和窗数；两边正常分母口径一致。阈值操作点不同仍需记录。Fa是空间连通域虚警密度，不是FP事件比例，无法单独证明背景事件都被正确抑制。
+
+PACT当前公开 [utils/eval.py](https://raw.githubusercontent.com/fulongcai/PACT/main/utils/eval.py) 第43–47行：connectedComponentsWithStats及false_num累加缩进在逐false_ev循环内部，与本项目每窗一次不同，会在构建同一掩膜时反复统计累加。其[test.py](https://raw.githubusercontent.com/fulongcai/PACT/main/test.py)直接调用该类。只能确认当前公开版本存在差异，不能推定论文报告值一定由此版本产生，更不能据此指控论文；与PACT的Fa百分比仅描述表中数值，严格优势需相同预测经统一评估器重算。
+
+PointEvent当前公开 [engines/test.py](https://raw.githubusercontent.com/wzz-z/PointEvent/main/engines/test.py)输出全局target_IoU、target_Acc、AUC和速度，并保存预测，所查看入口未实现Pd/Fa输出；因此现有公开入口不足以独立复算论文Pd/Fa。本文没有穷尽其所有历史提交或外部补充代码，不断言作者没有任何评估实现。
+
+下一步优先对旧R1+Jaccard/组合73%候选在val核验身份后冻结终评，或者以现有A1+Jaccard/R1操作点为基线，在val设计同Fa或同Pd比较。无需凭低Fa否定现有成果，也不能把单指标优势写为全面SOTA。本次未运行新训练/推理或修改任何评估实现。

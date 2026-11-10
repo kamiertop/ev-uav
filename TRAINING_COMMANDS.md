@@ -227,3 +227,22 @@ bash scripts/test_r1_sam.sh --gpu 0 --data-dir ../ev-uav-data
 固定批次20261110_121715_c91ef8、seed37、best_iou权重、math，四组（Jaccard及组合，各有/无SAM）统一test阈值.9；该阈值来自本批val峰值，不扫test阈值。不重训，不依赖旧10月21日权重。启动前校验所有config、训练完成状态与权重存在，缺任一个即停止；可加--dry-run预览（不检查权重、不访问数据）。如runs不在默认位置，用--runs-root PATH。
 
 保存四指标/precision/TP/FP/FN的summary.csv、完整逐序列JSON、日志、冻结计划、checkpoint SHA256与训练config/metrics，成功或测试中途失败均打包已有产物。回传 `runs/logs/r1_sam_test_*.tar.gz`；包不含权重。脚本已完成本地真实配置dry-run、模拟四次测试和打包、错误rho拒绝、编译和shell检查，未在本地启动实际推理。服务器实际耗时尚未测定。
+
+## 旧R1两份最佳权重正式测试（2026-11-10）
+
+使用scripts/test_r1_best.py和.sh，精确绑定10月21日batch20261021_104437_461ed8中的两组：
+
+- r1_jaccard：train_r1p_r1_jaccard_w0.1_s37_20261021_104437_461ed8_20261021_104716/checkpoints/best_iou_seed37.pt（val@.85 IoU73.31%）。
+- r1_precision：train_r1p_r1_precision_w0.1_s37_20261021_104437_461ed8_20261021_115309/checkpoints/best_iou_seed37.pt（val@.85 IoU73.18%）。
+
+服务器项目根执行：
+
+```bash
+bash scripts/test_r1_best.sh --gpu 0 --data-dir ../ev-uav-data
+```
+
+固定seed37/math/test@.85，每份best_iou权重各评一次，不训练、不扫test阈值。原训练按val@.9选权重，此处.85是旧val扫描已选的推理阈值。所有配置、50轮完成状态、best_iou数值及原始权重SHA256均在任何test前检查；期望SHA256来自已保存原始归档索引并与本地现存checkpoint复核一致。权重丢失/被覆盖时停止，不自动选择最新目录、不重训代替。--runs-root可指定存有这两个原目录的runs；--dry-run只预览，不检查权重或访问数据。
+
+若服务器只保留训练日志包，需要另行恢复原始checkpoint；Git和通常日志包不包含它们。本地runs/preserved/r1_validation_seed37_20261021.tar.gz包含原始权重，保留原目录布局；不要用新SAM权重替代。
+
+脚本输出runs/logs/r1_best_test_时间戳/，含两组JSON/逐序列指标/CSV、日志、冻结计划、checkpoint校验与训练config/metrics；回传runs/logs/r1_best_test_*.tar.gz。预期为分钟以内量级（旧测试单模型约十几秒，依服务器环境而变），不需要重新跑50轮。已完成真实配置/权重校验、模拟两组执行及打包、错误权重拒绝、Python编译/shell语法检查；未在本地实际推理。

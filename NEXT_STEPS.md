@@ -5,6 +5,26 @@
 `AGENTS.md` 和 README 仅引导到此文件，不维护另一份计划。本文记录截至上述日期的证据，接手时重新核验工作区和环境；当前功能以代码为准，运行参数以对应 config.json 为准，论文调研中的候选方案不等于已实现功能。
 
 
+## 2026-11-10 旧R1最佳两份权重测试入口已准备
+
+用户询问旧73%两权重如何测试，新增scripts/test_r1_best.py及.sh。精确绑定10月21日batch中r1_jaccard_104716和r1_precision_115309的best_iou_seed37.pt，固定test/seed37/math/阈值.85。启动前全量核验两组配置/训练完成/best_iou及权重SHA256（与旧保存索引一致），不误选SAM或新重训run；不训练或扫阈值。
+
+服务器命令 `bash scripts/test_r1_best.sh --gpu 0 --data-dir ../ev-uav-data`，回传runs/logs/r1_best_test_*.tar.gz；保留两组原始训练目录及权重。实际本地权重预检查、dry-run、模拟两次执行/打包、错误权重拒绝、编译/shell检查通过，未本地实际推理。已更新TRAINING_COMMANDS.md并生成/tmp/r1_best_test_scripts_20261110.tar.gz供上传；为沿用用户服务器git pull工作流，本次提交推送旧权重测试脚本与最新结果/命令文档（最终状态以Git为准），保留用户已暂存.python-version及README.zh-CN.md，不提交原始日志包和权重。下一步服务器git pull origin main后运行上述命令终评，无需上传脚本包；分析时不把此前val当test。
+
+## 2026-11-10 全目录排名与论文对照完成
+
+扫描runs及根目录6个结果包，去重后120条独立评估（27 test/93 val，含8条旧路线test），包内无未展开的新评估。test最高IoU仍A1+Jaccard s13@.9=66.6136/ACC72.0364/Pd81.2357/Fa1.145652e-5；原R1 s37@.95=65.97/74.32/81.01/1.88483e-5是另一高ACC候选。test最高ACC/Pd为R1s13=79.19/88.29，但IoU41.08，不能拼指标。当前路线最低Fa为A1Js73=2.705842e-6但IoU39.44；废弃a4_full虽Fa7.794974e-7但召回不足，不恢复。val最高仍旧R1Js37@.85=73.31%，尚未测该旧权重。
+
+重新核对四论文原表（本地SpTopoNet PDF及在线CVF/arXiv）：A1J冠军IoU距SpTopoNet66.62仅.00643pp，Fa数值低91.12%，但ACC/Pd各低2.39/2.12pp；与PointEvent75.56相比IoU差8.95pp，Fa仅略低4.53%。新发现PACT当前公开eval.py将连通域统计缩进在逐误检事件循环内，不同于我们/原EV-UAV每窗一次；PointEvent所查看公开测试入口未输出Pd/Fa，严格Fa对比尚需统一重算。不能由当前源码差异倒推论文报告一定有错。
+
+详见EXPERIMENT_RESULTS.md第17节；完整排名/来源/包hash/审计脚本/论文表在results/all_records_20261110/（被Git忽略）。本轮只读分析后更新结果与交接，保留原包/权重及用户暂存.python-version、README.zh-CN.md，不自动提交推送，不做本地训练/推理。下一步可固定旧73%候选终评或在val统一Fa/Pd约束，避免test调参。
+
+## 2026-11-10 SAM test结果已回收
+
+包r1_sam_test_20261110_165034_378f48.tar.gz已解压至runs/imported_r1_sam_test_20261110_165034_378f48/，四组完整test@.9/seed37/math，训练config/metrics与前包一致，逐序列计数复核通过。Jaccard无/有SAM：IoU58.21/62.22，ACC66.81/66.12，Pd80.28/74.27，Fa2.68e-5/1.17e-5；SAM提高IoU4.01pp并降低Fa56.4%，但Pd下降6.01pp，不能仅据val判定SAM无任何用途。组合无/有SAM：55.03/53.75、65.27/63.97、75.61/77.96、1.52e-5/3.51e-5，主指标无收益。
+
+Jaccard的FP减少6075，92.7%来自test_022/023；只8/24序列IoU改善，macro反降，不称普遍改善。旧73%仍是另一批val，本次未测旧权重，历史最佳test66.61也未被超越。详见EXPERIMENT_RESULTS.md第16节；索引results/r1_sam_test_20261110/，原包/日志/权重保留。后续可冻结旧两候选@.85终评或先旧权重val复核，不用本次test反复调参数；未自行开启新实验。本次仅结果分析与交接更新，保留用户已暂存.python-version/README.zh-CN.md，未提交推送。
+
 ## 2026-11-10 SAM测试脚本提交同步
 
 用户要求提交并推送，提交范围为SAM测试入口、实验分析/运行说明/本交接，以及已有train.py/utils/eval.py日志简化修改。60项CPU测试、Python编译、shell语法与git diff格式检查通过，无本地实际训练或推理。用户已暂存的.python-version与README.zh-CN.md属于其他修改，保留暂存状态，不纳入本次提交。大包/权重/results仍被Git忽略，不随推送上传。下一步服务器拉取main后执行 `bash scripts/test_r1_sam.sh --gpu 0 --data-dir ../ev-uav-data`，回传输出包。提交/推送最终状态以Git为准。
